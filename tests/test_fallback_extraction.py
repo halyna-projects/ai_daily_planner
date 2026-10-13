@@ -95,6 +95,13 @@ def test_recurrence_daily_russian():
     assert extract_recurrence_days("перейти на Lebara до 11.11.2026 - напоминать ежедневно") == 1
 
 
+def test_recurrence_daily_ukrainian_adverbial_form():
+    # Regression: the user wrote "щоденно" (not "щодня") and it was
+    # silently ignored since only the "щодня" word form was recognized.
+    due_text = "перейти на Lebara до 11.11.2026 - нагадувати щоденно"
+    assert extract_recurrence_days(due_text) == 1
+
+
 def test_recurrence_weekly():
     assert extract_recurrence_days("Прибирання, нагадувати щотижня") == 7
 

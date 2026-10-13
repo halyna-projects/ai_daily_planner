@@ -43,11 +43,11 @@ _TOMORROW_RE = re.compile(r"завтра", re.IGNORECASE)
 # 11.11.2026 - нагадувати щодня" means: repeat daily around that date).
 _EVERY_N_DAYS_RE = re.compile(r"кожні?\s+(\d+)\s*дн", re.IGNORECASE)
 _DAILY_RE = re.compile(
-    r"щодня|кожного дня|кожен день|ежедневно|каждый день|\bdaily\b|every day",
+    r"щодня|щоденн|кожного дня|кожен день|ежедневно|каждый день|\bdaily\b|every day",
     re.IGNORECASE,
 )
 _WEEKLY_RE = re.compile(
-    r"щотижня|кожного тижня|кожен тиждень|еженедельно|каждую неделю|\bweekly\b|every week",
+    r"щотижня|щотижнев|кожного тижня|кожен тиждень|еженедельно|каждую неделю|\bweekly\b|every week",
     re.IGNORECASE,
 )
 

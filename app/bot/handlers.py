@@ -8,10 +8,18 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from app.ai.claude_client import TaskParser
-from app.bot.keyboards import parse_reminder_callback, reminder_keyboard
+from app.bot.keyboards import delete_only_keyboard, parse_reminder_callback, reminder_keyboard
 from app.db import async_session_factory
 from app.models import TaskStatus
-from app.services.tasks import create_task, get_task, list_today, mark_done, snooze
+from app.services.tasks import (
+    create_task,
+    delete_task,
+    get_task,
+    list_pending,
+    list_today,
+    mark_done,
+    snooze,
+)
 
 logger = logging.getLogger(__name__)
 router = Router(name="planner")
@@ -34,6 +42,7 @@ WELCOME = (
     "иш задачу виконаною.\n\n"
     "Команди:\n"
     "/today — список задач на сьогодні\n"
+    "/tasks — всі активні задачі (можна видалити помилкові)\n"
     "/help — ця підказка"
 )
 
@@ -73,6 +82,22 @@ async def handle_today(message: Message) -> None:
     await message.answer("\n".join(lines))
 
 
+@router.message(Command("tasks"))
+async def handle_tasks(message: Message) -> None:
+    async with async_session_factory() as session:
+        tasks = await list_pending(session, message.from_user.id)
+
+    if not tasks:
+        await message.answer("Активних задач немає.")
+        return
+
+    await message.answer(f"Активних задач: {len(tasks)}. Щоб видалити помилкову — тисни 🗑 під нею.")
+    for task in tasks:
+        due = f"\nдо {task.due_at.strftime('%d.%m %H:%M')}" if task.due_at else ""
+        cadence = " 🔁" if task.recurrence_days else ""
+        await message.answer(f"{task.title}{due}{cadence}", reply_markup=delete_only_keyboard(task.id))
+
+
 @router.message(F.text)
 async def handle_new_task(message: Message) -> None:
     now = datetime.now()
@@ -104,7 +129,7 @@ async def handle_new_task(message: Message) -> None:
             "воно не закриється, а повернеться на наступний раз."
         )
 
-    await message.answer(reply)
+    await message.answer(reply, reply_markup=delete_only_keyboard(task_id))
     logger.info("Created task %s for user %s", task_id, message.from_user.id)
 
 
@@ -143,3 +168,11 @@ async def handle_reminder_button(callback: CallbackQuery) -> None:
             await snooze(session, task, now)
             await session.commit()
             await callback.answer("Перенесено.")
+        elif action == "delete":
+            await delete_task(session, task)
+            await session.commit()
+            await callback.answer("Видалено 🗑")
+            try:
+                await callback.message.edit_text(f"{callback.message.text}\n\n🗑 Видалено", reply_markup=None)
+            except Exception:
+                logger.debug("Could not update reminder message", exc_info=True)

@@ -75,6 +75,14 @@ async def snooze(session: AsyncSession, task: Task, now: datetime) -> None:
     await session.flush()
 
 
+async def delete_task(session: AsyncSession, task: Task) -> None:
+    """Remove a task outright -- the only way to fix a typo or a message
+    sent before you finished typing, since there's no in-place edit yet."""
+
+    await session.delete(task)
+    await session.flush()
+
+
 async def register_reminder_sent(session: AsyncSession, task: Task, now: datetime) -> bool:
     """Call right after a reminder message is actually sent: bumps the nag
     count and schedules the next one. Returns True if this reminder should
@@ -89,6 +97,18 @@ async def register_reminder_sent(session: AsyncSession, task: Task, now: datetim
 async def list_due_reminders(session: AsyncSession, now: datetime) -> list[Task]:
     result = await session.execute(
         select(Task).where(Task.status == TaskStatus.PENDING, Task.next_reminder_at <= now)
+    )
+    return list(result.scalars().all())
+
+
+async def list_pending(session: AsyncSession, telegram_user_id: int) -> list[Task]:
+    """All of a user's still-open tasks, regardless of due date -- used for
+    /tasks cleanup, unlike /today which only looks at today."""
+
+    result = await session.execute(
+        select(Task)
+        .where(Task.telegram_user_id == telegram_user_id, Task.status == TaskStatus.PENDING)
+        .order_by(Task.due_at.is_(None), Task.due_at, Task.created_at)
     )
     return list(result.scalars().all())
 

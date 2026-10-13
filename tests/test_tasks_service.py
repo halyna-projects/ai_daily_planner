@@ -6,7 +6,10 @@ from app.config import get_settings
 from app.models import TaskStatus
 from app.services.tasks import (
     create_task,
+    delete_task,
+    get_task,
     list_due_reminders,
+    list_pending,
     list_today,
     mark_done,
     register_reminder_sent,
@@ -179,3 +182,28 @@ async def test_list_today_only_returns_the_requesting_users_tasks(session):
 
     today = await list_today(session, telegram_user_id=1, now=NOW)
     assert [t.title for t in today] == ["Мій таск"]
+
+
+@pytest.mark.asyncio
+async def test_delete_task_removes_it_entirely(session):
+    task = await create_task(session, telegram_user_id=1, title="Поповнити П", due_at=None, now=NOW)
+    await session.commit()
+    task_id = task.id
+
+    await delete_task(session, task)
+    await session.commit()
+
+    assert await get_task(session, task_id) is None
+
+
+@pytest.mark.asyncio
+async def test_list_pending_only_returns_open_tasks_for_that_user(session):
+    open_task = await create_task(session, telegram_user_id=1, title="Відкрита", due_at=None, now=NOW)
+    done_task = await create_task(session, telegram_user_id=1, title="Закрита", due_at=None, now=NOW)
+    await mark_done(session, done_task, NOW)
+    other_user_task = await create_task(session, telegram_user_id=2, title="Чужа", due_at=None, now=NOW)
+    await session.commit()
+
+    pending = await list_pending(session, telegram_user_id=1)
+
+    assert [t.id for t in pending] == [open_task.id]

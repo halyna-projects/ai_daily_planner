@@ -15,7 +15,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.ai.fallback import extract_due_at
-from app.bot.keyboards import delete_only_keyboard
+from app.bot.keyboards import confirmation_keyboard
 from app.bot.task_replies import create_task_and_build_reply
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,15 @@ def _recurrence_keyboard() -> InlineKeyboardMarkup:
 async def start_wizard(message: Message, state: FSMContext) -> None:
     await state.set_state(NewTaskForm.title)
     await message.answer("Крок 1/3. Що потрібно зробити?")
+
+
+@router.callback_query(F.data == "wiz:new")
+async def restart_wizard(callback: CallbackQuery, state: FSMContext) -> None:
+    # Offered right under every "task created" confirmation, so adding the
+    # next task doesn't mean scrolling up to find and retype /new.
+    await state.set_state(NewTaskForm.title)
+    await callback.answer()
+    await callback.message.answer("Крок 1/3. Що потрібно зробити?")
 
 
 @router.message(NewTaskForm.title, F.text)
@@ -234,5 +243,5 @@ async def _finish(message: Message, state: FSMContext, telegram_user_id: int, re
     await state.clear()
     now = datetime.now()
     task_id, reply = await create_task_and_build_reply(telegram_user_id, title, due_at, recurrence_days, now)
-    await message.answer(reply, reply_markup=delete_only_keyboard(task_id))
+    await message.answer(reply, reply_markup=confirmation_keyboard(task_id))
     logger.info("Created task %s for user %s (wizard)", task_id, telegram_user_id)

@@ -10,6 +10,7 @@ from aiogram.types import CallbackQuery, Message
 from app.ai.claude_client import TaskParser
 from app.bot.keyboards import (
     clarify_due_date_keyboard,
+    confirmation_keyboard,
     delete_only_keyboard,
     parse_clarify_callback,
     parse_reminder_callback,
@@ -126,7 +127,7 @@ async def handle_new_task(message: Message) -> None:
     task_id, reply = await create_task_and_build_reply(
         message.from_user.id, parsed.title, parsed.due_at, parsed.recurrence_days, now
     )
-    await message.answer(reply, reply_markup=delete_only_keyboard(task_id))
+    await message.answer(reply, reply_markup=confirmation_keyboard(task_id))
     logger.info("Created task %s for user %s", task_id, message.from_user.id)
 
 
@@ -152,7 +153,7 @@ async def handle_clarify(callback: CallbackQuery) -> None:
     )
     await callback.answer("Записано!")
     try:
-        await callback.message.edit_text(reply, reply_markup=delete_only_keyboard(task_id))
+        await callback.message.edit_text(reply, reply_markup=confirmation_keyboard(task_id))
     except Exception:
         logger.debug("Could not update clarification message", exc_info=True)
     logger.info("Created task %s for user %s (clarified)", task_id, callback.from_user.id)

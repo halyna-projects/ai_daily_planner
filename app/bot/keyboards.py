@@ -25,14 +25,26 @@ def reminder_keyboard(task_id: int) -> InlineKeyboardMarkup:
 
 
 def delete_only_keyboard(task_id: int) -> InlineKeyboardMarkup:
-    """Used right after a task is created, and in the /tasks list -- a
-    quick one-tap undo for typos or messages sent before you were done
-    typing (no real "edit" yet: delete and resend the corrected text)."""
+    """Used in the /tasks list -- a quick one-tap undo for an older
+    mistake (no real "edit" yet: delete and resend the corrected text)."""
 
     buttons = [
         InlineKeyboardButton(text="🗑 Видалити", callback_data=reminder_callback_data(task_id, "delete")),
     ]
     return InlineKeyboardMarkup(inline_keyboard=[buttons])
+
+
+def confirmation_keyboard(task_id: int) -> InlineKeyboardMarkup:
+    """Shown right after a task is created: delete (undo a typo) plus a
+    one-tap way to start the next task's /new wizard without having to
+    scroll up in the chat to find and retype the command."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🗑 Видалити", callback_data=reminder_callback_data(task_id, "delete"))],
+            [InlineKeyboardButton(text="➕ Нова задача (покроково)", callback_data="wiz:new")],
+        ]
+    )
 
 
 def clarify_due_date_keyboard(labels: list[str]) -> InlineKeyboardMarkup:

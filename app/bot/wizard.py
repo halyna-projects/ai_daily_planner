@@ -1,7 +1,13 @@
 """Step-by-step task creation via /new, for when a free-text message would
 be ambiguous (several dates/times, or just a case where you'd rather fill in
-fields one at a time -- the same idea as Reminders on iPhone: what / when's
-the deadline / when to actually remind)."""
+fields one at a time -- the same idea as Reminders on iPhone: what / is it
+repeating / when's the deadline / when to actually remind).
+
+Recurrence is asked right after the title, before the deadline -- it used
+to come last, which meant someone answering "щодня" out of habit as soon as
+dates came up (at the "when to remind" step) got rejected as an
+unparseable date. Asking it early means it's never competing with a
+date/time question."""
 
 from __future__ import annotations
 
@@ -14,7 +20,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from app.ai.fallback import extract_due_at, extract_recurrence_days
+from app.ai.fallback import extract_due_at
 from app.bot.keyboards import confirmation_keyboard
 from app.bot.task_replies import create_task_and_build_reply
 
@@ -24,9 +30,19 @@ router = Router(name="new_task_wizard")
 
 class NewTaskForm(StatesGroup):
     title = State()
+    recurrence_custom = State()
     deadline_custom = State()
     remind_custom = State()
-    recurrence_custom = State()
+
+
+def _recurrence_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="Одноразово", callback_data="wiz:rec:none")],
+        [InlineKeyboardButton(text="Щодня", callback_data="wiz:rec:daily")],
+        [InlineKeyboardButton(text="Щотижня", callback_data="wiz:rec:weekly")],
+        [InlineKeyboardButton(text="✏️ Свій інтервал (днів)", callback_data="wiz:rec:custom")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _deadline_keyboard() -> InlineKeyboardMarkup:
@@ -49,20 +65,20 @@ def _remind_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _recurrence_keyboard() -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text="Одноразово", callback_data="wiz:rec:none")],
-        [InlineKeyboardButton(text="Щодня", callback_data="wiz:rec:daily")],
-        [InlineKeyboardButton(text="Щотижня", callback_data="wiz:rec:weekly")],
-        [InlineKeyboardButton(text="✏️ Свій інтервал (днів)", callback_data="wiz:rec:custom")],
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+def _cadence_label(recurrence_days: int | None) -> str:
+    if recurrence_days is None:
+        return "Одноразово"
+    if recurrence_days == 1:
+        return "Щодня"
+    if recurrence_days == 7:
+        return "Щотижня"
+    return f"Кожні {recurrence_days} дні(в)"
 
 
 @router.message(Command("new"))
 async def start_wizard(message: Message, state: FSMContext) -> None:
     await state.set_state(NewTaskForm.title)
-    await message.answer("Крок 1/3. Що потрібно зробити?")
+    await message.answer("Що потрібно зробити?")
 
 
 @router.callback_query(F.data == "wiz:new")
@@ -71,7 +87,7 @@ async def restart_wizard(callback: CallbackQuery, state: FSMContext) -> None:
     # next task doesn't mean scrolling up to find and retype /new.
     await state.set_state(NewTaskForm.title)
     await callback.answer()
-    await callback.message.answer("Крок 1/3. Що потрібно зробити?")
+    await callback.message.answer("Що потрібно зробити?")
 
 
 @router.message(NewTaskForm.title, F.text)
@@ -82,7 +98,50 @@ async def got_title(message: Message, state: FSMContext) -> None:
 
     await state.update_data(title=message.text.strip())
     await state.set_state(None)
-    await message.answer("Крок 2/3. Коли дедлайн?", reply_markup=_deadline_keyboard())
+    await message.answer("Це повторюване завдання?", reply_markup=_recurrence_keyboard())
+
+
+@router.callback_query(F.data.startswith("wiz:rec:"))
+async def got_recurrence_choice(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    if "title" not in data:
+        await callback.answer("Почни з /new.")
+        return
+
+    choice = callback.data.removeprefix("wiz:rec:")
+
+    if choice == "custom":
+        await state.set_state(NewTaskForm.recurrence_custom)
+        await callback.message.edit_text("Через скільки днів повторювати? Напиши число, наприклад: 3.")
+        await callback.answer()
+        return
+
+    recurrence_days = {"none": None, "daily": 1, "weekly": 7}[choice]
+    await state.update_data(recurrence_days=recurrence_days)
+    await callback.message.edit_text(_cadence_label(recurrence_days))
+    await callback.answer()
+    await message_ask_deadline(callback.message, state)
+
+
+@router.message(NewTaskForm.recurrence_custom, F.text)
+async def got_recurrence_custom(message: Message, state: FSMContext) -> None:
+    if message.text.startswith("/"):
+        await message.answer("Спочатку заверши створення задачі (або почни заново: /new).")
+        return
+
+    if not message.text.strip().isdigit():
+        await message.answer("Напиши просто число днів, наприклад: 3.")
+        return
+
+    recurrence_days = int(message.text.strip())
+    await state.update_data(recurrence_days=recurrence_days)
+    await state.set_state(None)
+    await message.answer(_cadence_label(recurrence_days))
+    await message_ask_deadline(message, state)
+
+
+async def message_ask_deadline(message: Message, state: FSMContext) -> None:
+    await message.answer("Коли дедлайн?", reply_markup=_deadline_keyboard())
 
 
 @router.callback_query(
@@ -99,7 +158,9 @@ async def got_deadline_choice(callback: CallbackQuery, state: FSMContext) -> Non
     if callback.data == "wiz:deadline:none":
         await state.update_data(due_at=None)
         await callback.message.edit_text("Без дедлайну.")
-        await _ask_recurrence(callback.message, state)
+        await callback.answer()
+        await _finish(callback.message, state, callback.from_user.id)
+        return
     elif callback.data == "wiz:deadline:custom":
         await state.set_state(NewTaskForm.deadline_custom)
         await callback.message.edit_text(
@@ -142,7 +203,7 @@ async def got_deadline_custom(message: Message, state: FSMContext) -> None:
 
 
 async def _ask_remind_offset(message: Message, state: FSMContext) -> None:
-    await message.answer("Крок 3/3. Коли нагадати?", reply_markup=_remind_keyboard())
+    await message.answer("Коли нагадати?", reply_markup=_remind_keyboard())
 
 
 @router.callback_query(F.data.startswith("wiz:remind:"))
@@ -157,23 +218,26 @@ async def got_remind_choice(callback: CallbackQuery, state: FSMContext) -> None:
     if choice == "same":
         await callback.message.edit_text(f"Нагадаю рівно о {due_at.strftime('%d.%m %H:%M')}.")
         await state.update_data(remind_at=due_at.isoformat())
-        await _ask_recurrence(callback.message, state)
+        await callback.answer()
+        await _finish(callback.message, state, callback.from_user.id)
+        return
     elif choice == "1h":
         remind_at = due_at - timedelta(hours=1)
         await state.update_data(remind_at=remind_at.isoformat())
         await callback.message.edit_text(f"Нагадаю о {remind_at.strftime('%d.%m %H:%M')} (за годину до).")
-        await _ask_recurrence(callback.message, state)
+        await callback.answer()
+        await _finish(callback.message, state, callback.from_user.id)
+        return
     elif choice == "1d":
         remind_at = due_at - timedelta(days=1)
         await state.update_data(remind_at=remind_at.isoformat())
         await callback.message.edit_text(f"Нагадаю о {remind_at.strftime('%d.%m %H:%M')} (за день до).")
-        await _ask_recurrence(callback.message, state)
+        await callback.answer()
+        await _finish(callback.message, state, callback.from_user.id)
+        return
     else:
         await state.set_state(NewTaskForm.remind_custom)
-        await callback.message.edit_text(
-            "Напиши конкретні дату і час, наприклад: 27.10.2026 21:00.\n"
-            "(Періодичність на кшталт «щодня» спитаю наступним кроком.)"
-        )
+        await callback.message.edit_text("Напиши конкретні дату і час, наприклад: 27.10.2026 21:00.")
 
     await callback.answer()
 
@@ -186,77 +250,20 @@ async def got_remind_custom(message: Message, state: FSMContext) -> None:
 
     now = datetime.now()
     remind_at = extract_due_at(message.text, now)
-    if remind_at is not None:
-        await state.update_data(remind_at=remind_at.isoformat())
-        await state.set_state(None)
-        await message.answer(f"Нагадаю о {remind_at.strftime('%d.%m %H:%M')}.")
-        await _ask_recurrence(message, state)
+    if remind_at is None:
+        await message.answer("Не зрозумів, спробуй ще раз, наприклад: 27.10.2026 21:00.")
         return
 
-    # She likely answered the *next* question early -- "щодня"/"щоденно"
-    # etc. here means a recurrence cadence, not a date/time. Recognize it
-    # instead of just rejecting the message: use the deadline's own time as
-    # the reminder time and apply the cadence directly, skipping the
-    # recurrence step since it's already answered.
-    recurrence_days = extract_recurrence_days(message.text)
-    if recurrence_days is not None:
-        data = await state.get_data()
-        due_at = datetime.fromisoformat(data["due_at"])
-        await state.update_data(remind_at=due_at.isoformat())
-        await state.set_state(None)
-        cadence = "щодня" if recurrence_days == 1 else (
-            "щотижня" if recurrence_days == 7 else f"кожні {recurrence_days} дні(в)"
-        )
-        await message.answer(f"Зрозумів: нагадуватиму {cadence}, починаючи з {due_at.strftime('%d.%m %H:%M')}.")
-        await _finish(message, state, message.from_user.id, recurrence_days)
-        return
-
-    await message.answer(
-        "Тут потрібні конкретні дата й час, наприклад: 27.10.2026 21:00. "
-        "Періодичність (щодня тощо) спитаю наступним кроком."
-    )
+    await state.update_data(remind_at=remind_at.isoformat())
+    await state.set_state(None)
+    await message.answer(f"Нагадаю о {remind_at.strftime('%d.%m %H:%M')}.")
+    await _finish(message, state, message.from_user.id)
 
 
-async def _ask_recurrence(message: Message, state: FSMContext) -> None:
-    await message.answer("Це повторюване завдання?", reply_markup=_recurrence_keyboard())
-
-
-@router.callback_query(F.data.startswith("wiz:rec:"))
-async def got_recurrence_choice(callback: CallbackQuery, state: FSMContext) -> None:
-    data = await state.get_data()
-    if "title" not in data:
-        await callback.answer("Почни з /new.")
-        return
-
-    choice = callback.data.removeprefix("wiz:rec:")
-
-    if choice == "custom":
-        await state.set_state(NewTaskForm.recurrence_custom)
-        await callback.message.edit_text("Через скільки днів повторювати? Напиши число, наприклад: 3.")
-        await callback.answer()
-        return
-
-    recurrence_days = {"none": None, "daily": 1, "weekly": 7}[choice]
-    await callback.answer()
-    await _finish(callback.message, state, callback.from_user.id, recurrence_days)
-
-
-@router.message(NewTaskForm.recurrence_custom, F.text)
-async def got_recurrence_custom(message: Message, state: FSMContext) -> None:
-    if message.text.startswith("/"):
-        await message.answer("Спочатку заверши створення задачі (або почни заново: /new).")
-        return
-
-    if not message.text.strip().isdigit():
-        await message.answer("Напиши просто число днів, наприклад: 3.")
-        return
-
-    await _finish(message, state, message.from_user.id, int(message.text.strip()))
-
-
-async def _finish(message: Message, state: FSMContext, telegram_user_id: int, recurrence_days: int | None) -> None:
+async def _finish(message: Message, state: FSMContext, telegram_user_id: int) -> None:
     data = await state.get_data()
     title = data["title"]
+    recurrence_days = data.get("recurrence_days")
     due_at_raw = data.get("due_at")
     remind_at_raw = data.get("remind_at")
 

@@ -1,0 +1,56 @@
+from datetime import datetime
+
+from app.ai.fallback import extract_due_at
+
+NOW = datetime(2026, 10, 14, 10, 0, 0)  # a Wednesday
+
+
+def test_no_deadline_mentioned():
+    assert extract_due_at("Подзвонити сантехніку", NOW) is None
+
+
+def test_tomorrow_with_time():
+    due = extract_due_at("Подати документи в банк до завтра 15:00", NOW)
+    assert due == datetime(2026, 10, 15, 15, 0)
+
+
+def test_tomorrow_without_time_defaults_to_nine():
+    due = extract_due_at("Зробити це завтра", NOW)
+    assert due == datetime(2026, 10, 15, 9, 0)
+
+
+def test_today_with_time():
+    due = extract_due_at("Зробити звіт сьогодні о 18:30", NOW)
+    assert due == datetime(2026, 10, 14, 18, 30)
+
+
+def test_today_without_time_has_no_deadline():
+    # "today" alone isn't a real deadline -- falls back to the default
+    # reminder interval instead of inventing a time.
+    assert extract_due_at("Зробити це сьогодні", NOW) is None
+
+
+def test_relative_minutes():
+    due = extract_due_at("Написати через 20 хв", NOW)
+    assert due == datetime(2026, 10, 14, 10, 20)
+
+
+def test_relative_hours():
+    due = extract_due_at("Зустріч через 2 години", NOW)
+    assert due == datetime(2026, 10, 14, 12, 0)
+
+
+def test_bare_time_today_if_still_ahead():
+    due = extract_due_at("Купити хліб о 14:00", NOW)
+    assert due == datetime(2026, 10, 14, 14, 0)
+
+
+def test_bare_time_rolls_to_tomorrow_if_already_passed():
+    due = extract_due_at("Купити хліб о 09:00", NOW)
+    assert due == datetime(2026, 10, 15, 9, 0)
+
+
+def test_weekday_name_resolves_to_next_occurrence():
+    due = extract_due_at("Зробити до п'ятниці", NOW)
+    assert due == datetime(2026, 10, 16, 9, 0)
+    assert due.weekday() == 4

@@ -37,6 +37,20 @@ _IN_HOURS_RE = re.compile(r"через\s+(\d+)\s*(?:год|годин)", re.IGNO
 _TODAY_RE = re.compile(r"сьогодні", re.IGNORECASE)
 _TOMORROW_RE = re.compile(r"завтра", re.IGNORECASE)
 
+# An explicit repeat cadence mentioned in the message itself, e.g.
+# "нагадувати щодня" / "напоминать ежедневно" / "every day" -- checked
+# separately from the deadline, since a message can carry both ("до
+# 11.11.2026 - нагадувати щодня" means: repeat daily around that date).
+_EVERY_N_DAYS_RE = re.compile(r"кожні?\s+(\d+)\s*дн", re.IGNORECASE)
+_DAILY_RE = re.compile(
+    r"щодня|кожного дня|кожен день|ежедневно|каждый день|\bdaily\b|every day",
+    re.IGNORECASE,
+)
+_WEEKLY_RE = re.compile(
+    r"щотижня|кожного тижня|кожен тиждень|еженедельно|каждую неделю|\bweekly\b|every week",
+    re.IGNORECASE,
+)
+
 
 def _extract_time(text: str) -> tuple[int, int] | None:
     match = _TIME_RE.search(text)
@@ -116,5 +130,23 @@ def extract_due_at(text: str, now: datetime) -> datetime | None:
         if candidate <= now:
             candidate += timedelta(days=1)
         return candidate
+
+    return None
+
+
+def extract_recurrence_days(text: str) -> int | None:
+    """Pull an explicit repeat cadence out of free text, as a day interval
+    (1 = daily, 7 = weekly). Returns None for a one-off task with no
+    repeating cadence mentioned."""
+
+    every_n = _EVERY_N_DAYS_RE.search(text)
+    if every_n:
+        return int(every_n.group(1))
+
+    if _DAILY_RE.search(text):
+        return 1
+
+    if _WEEKLY_RE.search(text):
+        return 7
 
     return None

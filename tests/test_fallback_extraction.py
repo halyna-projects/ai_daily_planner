@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from app.ai.fallback import extract_due_at
+from app.ai.fallback import extract_due_at, extract_recurrence_days
 
 NOW = datetime(2026, 10, 14, 10, 0, 0)  # a Wednesday
 
@@ -79,3 +79,36 @@ def test_explicit_date_without_year_rolls_to_next_year_if_passed():
 def test_explicit_date_with_time():
     due = extract_due_at("Зустріч 11.11.2026 о 14:30", NOW)
     assert due == datetime(2026, 11, 11, 14, 30)
+
+
+def test_no_recurrence_mentioned():
+    assert extract_recurrence_days("Подзвонити сантехніку") is None
+
+
+def test_recurrence_daily_ukrainian():
+    assert extract_recurrence_days("Випити таблетки, нагадувати щодня") == 1
+
+
+def test_recurrence_daily_russian():
+    # Regression: "напоминать ежедневно" used to be silently ignored,
+    # leaving the task a one-off even though a repeat was explicitly asked.
+    assert extract_recurrence_days("перейти на Lebara до 11.11.2026 - напоминать ежедневно") == 1
+
+
+def test_recurrence_weekly():
+    assert extract_recurrence_days("Прибирання, нагадувати щотижня") == 7
+
+
+def test_recurrence_every_n_days():
+    assert extract_recurrence_days("Поливати квіти кожні 3 дні") == 3
+
+
+def test_recurrence_combines_with_explicit_date():
+    due = extract_due_at(
+        "перейти на Lebara до 11.11.2026 - напоминать ежедневно", NOW
+    )
+    assert due == datetime(2026, 11, 11, 9, 0)
+    assert (
+        extract_recurrence_days("перейти на Lebara до 11.11.2026 - напоминать ежедневно")
+        == 1
+    )

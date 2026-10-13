@@ -61,6 +61,45 @@ async def test_mark_done_removes_task_from_due_list(session):
 
 
 @pytest.mark.asyncio
+async def test_mark_done_on_recurring_task_reschedules_instead_of_closing(session):
+    due = NOW.replace(hour=9, minute=0)
+    task = await create_task(
+        session,
+        telegram_user_id=1,
+        title="Випити таблетки",
+        due_at=due,
+        now=NOW - timedelta(days=1),
+        recurrence_days=1,
+    )
+    await register_reminder_sent(session, task, due)
+    await mark_done(session, task, NOW)
+    await session.commit()
+
+    assert task.status == TaskStatus.PENDING
+    assert task.completed_at == NOW
+    assert task.due_at == due + timedelta(days=1)
+    assert task.next_reminder_at == due + timedelta(days=1)
+    assert task.reminder_count == 0
+
+
+@pytest.mark.asyncio
+async def test_mark_done_on_recurring_task_without_due_date_uses_now(session):
+    task = await create_task(
+        session,
+        telegram_user_id=1,
+        title="Пити воду",
+        due_at=None,
+        now=NOW,
+        recurrence_days=1,
+    )
+    await mark_done(session, task, NOW)
+    await session.commit()
+
+    assert task.status == TaskStatus.PENDING
+    assert task.due_at == NOW + timedelta(days=1)
+
+
+@pytest.mark.asyncio
 async def test_register_reminder_sent_reschedules_and_counts(session):
     task = await create_task(session, telegram_user_id=1, title="Подзвонити", due_at=None, now=NOW)
     await session.commit()

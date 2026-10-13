@@ -60,8 +60,15 @@ async def handle_today(message: Message) -> None:
 
     lines = ["Задачі на сьогодні:"]
     for task in tasks:
-        mark = "✅" if task.status == TaskStatus.DONE else "⏳"
-        due = f" (до {task.due_at.strftime('%H:%M')})" if task.due_at else ""
+        if task.recurrence_days:
+            done_today = (
+                task.completed_at is not None and task.completed_at.date() == now.date()
+            )
+            mark = "✅" if done_today else "🔁"
+            due = f" (повторюється, до {task.due_at.strftime('%H:%M')})" if task.due_at else " (повторюється)"
+        else:
+            mark = "✅" if task.status == TaskStatus.DONE else "⏳"
+            due = f" (до {task.due_at.strftime('%H:%M')})" if task.due_at else ""
         lines.append(f"{mark} {task.title}{due}")
     await message.answer("\n".join(lines))
 
@@ -73,7 +80,12 @@ async def handle_new_task(message: Message) -> None:
 
     async with async_session_factory() as session:
         task = await create_task(
-            session, message.from_user.id, parsed.title, parsed.due_at, now
+            session,
+            message.from_user.id,
+            parsed.title,
+            parsed.due_at,
+            now,
+            recurrence_days=parsed.recurrence_days,
         )
         await session.commit()
         task_id = task.id
@@ -82,6 +94,16 @@ async def handle_new_task(message: Message) -> None:
         reply = f"Записав! Нагадаю до {parsed.due_at.strftime('%d.%m %H:%M')}."
     else:
         reply = "Записав! Нагадуватиму регулярно, поки не відмітиш виконаним."
+
+    if parsed.recurrence_days:
+        cadence = "щодня" if parsed.recurrence_days == 1 else (
+            "щотижня" if parsed.recurrence_days == 7 else f"кожні {parsed.recurrence_days} дні(в)"
+        )
+        reply += (
+            f" Це повторюване завдання — нагадуватиму {cadence}: після «Виконано» "
+            "воно не закриється, а повернеться на наступний раз."
+        )
+
     await message.answer(reply)
     logger.info("Created task %s for user %s", task_id, message.from_user.id)
 
@@ -98,12 +120,19 @@ async def handle_reminder_button(callback: CallbackQuery) -> None:
             return
 
         if action == "done":
+            was_recurring = bool(task.recurrence_days)
             await mark_done(session, task, now)
             await session.commit()
-            await callback.answer("Відмічено виконаним ✅")
+            if was_recurring:
+                next_due = task.due_at.strftime("%d.%m %H:%M") if task.due_at else ""
+                await callback.answer(f"Виконано ✅ Нагадаю знову {next_due}".rstrip())
+                closing_note = f"\n\n✅ Виконано (повторю {next_due})" if next_due else "\n\n✅ Виконано"
+            else:
+                await callback.answer("Відмічено виконаним ✅")
+                closing_note = "\n\n✅ Виконано"
             try:
                 await callback.message.edit_text(
-                    f"{callback.message.text}\n\n✅ Виконано", reply_markup=None
+                    f"{callback.message.text}{closing_note}", reply_markup=None
                 )
             except Exception:
                 logger.debug("Could not update reminder message", exc_info=True)

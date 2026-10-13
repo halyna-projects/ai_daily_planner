@@ -30,6 +30,11 @@ class Task(Base):
     due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # If set, this task repeats every N days: marking it done reschedules
+    # due_at/next_reminder_at forward by this many days instead of closing
+    # the task for good.
+    recurrence_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # Nagging state.
     reminder_interval_minutes: Mapped[int] = mapped_column(Integer, default=15)
     next_reminder_at: Mapped[datetime] = mapped_column(DateTime)

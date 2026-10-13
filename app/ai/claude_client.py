@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 class ParsedTask:
     title: str
     due_at: datetime | None
+    recurrence_days: int | None = None
 
 
 class TaskParser:
@@ -38,9 +39,13 @@ class TaskParser:
         title = text.strip()
 
         if not self.is_live:
-            from app.ai.fallback import extract_due_at
+            from app.ai.fallback import extract_due_at, extract_recurrence_days
 
-            return ParsedTask(title=title, due_at=extract_due_at(text, now))
+            return ParsedTask(
+                title=title,
+                due_at=extract_due_at(text, now),
+                recurrence_days=extract_recurrence_days(text),
+            )
 
         try:
             response = self._client.messages.create(
@@ -55,10 +60,17 @@ class TaskParser:
                 if block.type == "tool_use" and block.name == "extract_task":
                     due_at_raw = block.input.get("due_at")
                     due_at = datetime.fromisoformat(due_at_raw) if due_at_raw else None
-                    return ParsedTask(title=title, due_at=due_at)
+                    recurrence_days = block.input.get("recurrence_days")
+                    return ParsedTask(
+                        title=title, due_at=due_at, recurrence_days=recurrence_days
+                    )
         except Exception:
             logger.exception("TaskParser: live extraction failed, falling back")
 
-        from app.ai.fallback import extract_due_at
+        from app.ai.fallback import extract_due_at, extract_recurrence_days
 
-        return ParsedTask(title=title, due_at=extract_due_at(text, now))
+        return ParsedTask(
+            title=title,
+            due_at=extract_due_at(text, now),
+            recurrence_days=extract_recurrence_days(text),
+        )

@@ -17,6 +17,7 @@ async def create_task(
     title: str,
     due_at: datetime | None,
     now: datetime,
+    recurrence_days: int | None = None,
 ) -> Task:
     """Create a pending task. Nagging starts at the deadline if one was
     given, otherwise immediately (now + the default interval) -- so a task
@@ -33,6 +34,7 @@ async def create_task(
         status=TaskStatus.PENDING,
         created_at=now,
         due_at=due_at,
+        recurrence_days=recurrence_days,
         reminder_interval_minutes=settings.default_reminder_interval_minutes,
         next_reminder_at=next_reminder_at,
         reminder_count=0,
@@ -48,8 +50,23 @@ async def get_task(session: AsyncSession, task_id: int) -> Task | None:
 
 
 async def mark_done(session: AsyncSession, task: Task, now: datetime) -> None:
-    task.status = TaskStatus.DONE
+    """Close a one-off task. A recurring task is never closed -- it's
+    rescheduled forward by its cadence instead, so it keeps nagging on the
+    next occurrence."""
+
     task.completed_at = now
+
+    if task.recurrence_days:
+        base = task.due_at or now
+        next_due = base + timedelta(days=task.recurrence_days)
+        while next_due <= now:
+            next_due += timedelta(days=task.recurrence_days)
+        task.due_at = next_due
+        task.next_reminder_at = next_due
+        task.reminder_count = 0
+    else:
+        task.status = TaskStatus.DONE
+
     await session.flush()
 
 

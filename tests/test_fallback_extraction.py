@@ -54,3 +54,28 @@ def test_weekday_name_resolves_to_next_occurrence():
     due = extract_due_at("Зробити до п'ятниці", NOW)
     assert due == datetime(2026, 10, 16, 9, 0)
     assert due.weekday() == 4
+
+
+def test_explicit_date_with_year_is_not_misread_as_a_time():
+    # Regression: "11.11.2026" used to be matched by the bare HH:MM regex
+    # as if it meant 11:11 today, silently discarding the actual date the
+    # user typed (day 11, month 11, year 2026).
+    due = extract_due_at(
+        "перейти на Lebara до 11.11.2026 (mitid, jobnet, mobilepay=...)", NOW
+    )
+    assert due == datetime(2026, 11, 11, 9, 0)
+
+
+def test_explicit_date_without_year_assumes_current_year():
+    due = extract_due_at("Здати звіт до 20.12", NOW)
+    assert due == datetime(2026, 12, 20, 9, 0)
+
+
+def test_explicit_date_without_year_rolls_to_next_year_if_passed():
+    due = extract_due_at("Привітати з днем народження 1.01", NOW)
+    assert due == datetime(2027, 1, 1, 9, 0)
+
+
+def test_explicit_date_with_time():
+    due = extract_due_at("Зустріч 11.11.2026 о 14:30", NOW)
+    assert due == datetime(2026, 11, 11, 14, 30)

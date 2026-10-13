@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher
 
 from app.bot.handlers import router
 from app.bot.scheduler import run_reminder_loop
+from app.bot.wizard import router as wizard_router
 from app.config import get_settings
 from app.db import init_db
 
@@ -23,6 +24,10 @@ async def main() -> None:
 
     bot = Bot(token=settings.telegram_bot_token)
     dispatcher = Dispatcher()
+    # The wizard router must come first: its handlers are state-gated (only
+    # fire mid-/new-flow), while handlers.router's F.text catch-all matches
+    # any text unconditionally and would otherwise swallow wizard input.
+    dispatcher.include_router(wizard_router)
     dispatcher.include_router(router)
 
     use_ai = "yes" if settings.anthropic_api_key else "no (fallback parser)"

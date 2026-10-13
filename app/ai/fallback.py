@@ -28,10 +28,16 @@ _WEEKDAY_STEMS = [
 # "11.11.2026" as if it were the time 11:11, silently discarding the actual
 # date the user typed.
 _TIME_RE = re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b")
-# An explicit day.month[.year] date, e.g. "11.11.2026" or "5.03". Checked
-# before anything else, since it's the most unambiguous signal in the
-# message and must win over any dot that could be misread as a time.
-_DATE_RE = re.compile(r"\b(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?\b")
+# An explicit day.month[.year] date, e.g. "11.11.2026", "5.03" or "28/10/2026"
+# (both '.' and '/' separators are in the wild). Checked before anything
+# else, since it's the most unambiguous signal in the message and must win
+# over any dot that could be misread as a time.
+_DATE_RE = re.compile(r"\b(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?\b")
+# A message can carry two dates that mean different things -- the event
+# itself and a separate "remind me on this day" instruction, e.g. "28/10 -
+# Лікар о 10:30 - нагадати 27.10 о 21:00". A word like this right before a
+# date marks that date as the one to actually schedule the reminder by.
+_REMIND_KEYWORD_RE = re.compile(r"нагад|напомн|\bremind", re.IGNORECASE)
 _IN_MINUTES_RE = re.compile(r"через\s+(\d+)\s*хв", re.IGNORECASE)
 _IN_HOURS_RE = re.compile(r"через\s+(\d+)\s*(?:год|годин)", re.IGNORECASE)
 _TODAY_RE = re.compile(r"сьогодні", re.IGNORECASE)
@@ -59,30 +65,94 @@ def _extract_time(text: str) -> tuple[int, int] | None:
     return int(match.group(1)), int(match.group(2))
 
 
+def _find_date_candidates(text: str, now: datetime) -> list[tuple[datetime, int]]:
+    """Every explicit date in the message, each paired with the time that
+    most plausibly belongs to it: the first explicit HH:MM found after that
+    date and before the next one (so "28/10 о 10:30 - нагадати 27.10 о
+    21:00" pairs each date with its own time, not the first time found
+    anywhere in the text). Returns (datetime, date_match_start_index) pairs
+    -- the index lets callers check what word immediately precedes a date."""
+
+    date_matches = list(_DATE_RE.finditer(text))
+    if not date_matches:
+        return []
+
+    time_matches = list(_TIME_RE.finditer(text))
+    assigned_time: dict[int, tuple[int, int]] = {}
+    for time_match in time_matches:
+        owner = None
+        for i, date_match in enumerate(date_matches):
+            if date_match.start() < time_match.start():
+                owner = i
+            else:
+                break
+        if owner is not None and owner not in assigned_time:
+            assigned_time[owner] = (int(time_match.group(1)), int(time_match.group(2)))
+
+    candidates: list[tuple[datetime, int]] = []
+    for i, match in enumerate(date_matches):
+        day, month = int(match.group(1)), int(match.group(2))
+        year_raw = match.group(3)
+        if year_raw:
+            year = int(year_raw)
+            if year < 100:
+                year += 2000
+        else:
+            year = now.year
+
+        hour, minute = assigned_time.get(i, (9, 0))
+        try:
+            candidate = datetime(year, month, day, hour, minute)
+        except ValueError:
+            continue
+
+        if not year_raw and candidate <= now:
+            candidate = candidate.replace(year=year + 1)
+        candidates.append((candidate, match.start()))
+
+    return candidates
+
+
+def _is_reminder_marked(text: str, date_start: int) -> bool:
+    window = text[max(0, date_start - 25) : date_start]
+    return bool(_REMIND_KEYWORD_RE.search(window))
+
+
 def _extract_explicit_date(text: str, now: datetime) -> datetime | None:
-    match = _DATE_RE.search(text)
-    if not match:
+    candidates = _find_date_candidates(text, now)
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0][0]
+
+    marked = [dt for dt, start in candidates if _is_reminder_marked(text, start)]
+    if len(marked) == 1:
+        return marked[0]
+
+    # Genuinely ambiguous (0 or 2+ dates explicitly marked as "remind me on
+    # this one") -- best-effort fall back to the first date mentioned.
+    # extract_ambiguous_candidates() is what callers should check first to
+    # ask the user instead of silently guessing here.
+    return candidates[0][0]
+
+
+def extract_ambiguous_candidates(text: str, now: datetime) -> list[tuple[datetime, str]] | None:
+    """When a message mentions multiple explicit dates and it isn't clear
+    which one is the actual reminder time (no single date is marked with a
+    "нагадати/напомни/remind"-type word), return the candidates so the
+    caller can ask the user to pick instead of guessing wrong. Returns None
+    when there's nothing to ask about -- 0 or 1 dates, or exactly one is
+    already unambiguously marked."""
+
+    candidates = _find_date_candidates(text, now)
+    if len(candidates) < 2:
         return None
 
-    day, month = int(match.group(1)), int(match.group(2))
-    year_raw = match.group(3)
-    if year_raw:
-        year = int(year_raw)
-        if year < 100:
-            year += 2000
-    else:
-        year = now.year
-
-    hour, minute = _extract_time(text) or (9, 0)
-    try:
-        candidate = datetime(year, month, day, hour, minute)
-    except ValueError:
+    marked = [dt for dt, start in candidates if _is_reminder_marked(text, start)]
+    if len(marked) == 1:
         return None
 
-    # No year given and the date already passed this year -- assume next year.
-    if not year_raw and candidate <= now:
-        candidate = candidate.replace(year=year + 1)
-    return candidate
+    return [(dt, dt.strftime("%d.%m %H:%M")) for dt, _ in candidates]
 
 
 def extract_due_at(text: str, now: datetime) -> datetime | None:

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from app.ai.fallback import extract_due_at, extract_recurrence_days
+from app.ai.fallback import extract_ambiguous_candidates, extract_due_at, extract_recurrence_days
 
 NOW = datetime(2026, 10, 14, 10, 0, 0)  # a Wednesday
 
@@ -79,6 +79,34 @@ def test_explicit_date_without_year_rolls_to_next_year_if_passed():
 def test_explicit_date_with_time():
     due = extract_due_at("Зустріч 11.11.2026 о 14:30", NOW)
     assert due == datetime(2026, 11, 11, 14, 30)
+
+
+def test_two_dates_with_an_explicit_remind_keyword_picks_the_marked_one():
+    # Regression: the real message that triggered this -- an appointment
+    # date/time plus a separately specified reminder date/time -- used to
+    # take the date of the second mention but the time of the first,
+    # producing a date/time combination the user never typed.
+    text = "28/10/2026 - Лікар Тройборг  о 10:30 - нагадати 27.10.2026 о 21:00"
+    due = extract_due_at(text, NOW)
+    assert due == datetime(2026, 10, 27, 21, 0)
+    assert extract_ambiguous_candidates(text, NOW) is None
+
+
+def test_two_dates_with_slash_separator_also_detected():
+    due = extract_due_at("28/10/2026 - нагадати 27/10/2026 о 21:00", NOW)
+    assert due == datetime(2026, 10, 27, 21, 0)
+
+
+def test_two_dates_neither_marked_is_genuinely_ambiguous():
+    text = "Зустріч 11.11.2026 о 10:00 або 12.11.2026 о 15:00"
+    assert extract_ambiguous_candidates(text, NOW) == [
+        (datetime(2026, 11, 11, 10, 0), "11.11 10:00"),
+        (datetime(2026, 11, 12, 15, 0), "12.11 15:00"),
+    ]
+
+
+def test_single_date_is_never_ambiguous():
+    assert extract_ambiguous_candidates("Зустріч 11.11.2026 о 14:30", NOW) is None
 
 
 def test_no_recurrence_mentioned():

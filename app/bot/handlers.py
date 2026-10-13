@@ -8,23 +8,28 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from app.ai.claude_client import TaskParser
-from app.bot.keyboards import delete_only_keyboard, parse_reminder_callback, reminder_keyboard
+from app.bot.keyboards import (
+    clarify_due_date_keyboard,
+    delete_only_keyboard,
+    parse_clarify_callback,
+    parse_reminder_callback,
+    reminder_keyboard,
+)
+from app.bot.task_replies import create_task_and_build_reply
 from app.db import async_session_factory
 from app.models import TaskStatus
-from app.services.tasks import (
-    create_task,
-    delete_task,
-    get_task,
-    list_pending,
-    list_today,
-    mark_done,
-    snooze,
-)
+from app.services.tasks import delete_task, get_task, list_pending, list_today, mark_done, snooze
 
 logger = logging.getLogger(__name__)
 router = Router(name="planner")
 
 _parser: TaskParser | None = None
+
+# A task waiting on the user to pick which of several dates/times found in
+# their message is the actual reminder time (see extract_ambiguous_candidates
+# in app/ai/fallback.py). Keyed by telegram_user_id; lost on restart, which
+# just means re-sending the message -- acceptable for a single-process bot.
+_pending_clarifications: dict[int, tuple[str, list[tuple[datetime, str]]]] = {}
 
 
 def get_parser() -> TaskParser:
@@ -41,6 +46,7 @@ WELCOME = (
     "Я сам зрозумію, що робити і коли, і буду нагадувати, поки ти не відміт"
     "иш задачу виконаною.\n\n"
     "Команди:\n"
+    "/new — покроково, з кнопками (що / коли дедлайн / коли нагадати)\n"
     "/today — список задач на сьогодні\n"
     "/tasks — всі активні задачі (можна видалити помилкові)\n"
     "/help — ця підказка"
@@ -101,36 +107,55 @@ async def handle_tasks(message: Message) -> None:
 @router.message(F.text)
 async def handle_new_task(message: Message) -> None:
     now = datetime.now()
+
+    if not get_parser().is_live:
+        from app.ai.fallback import extract_ambiguous_candidates
+
+        candidates = extract_ambiguous_candidates(message.text, now)
+        if candidates:
+            _pending_clarifications[message.from_user.id] = (message.text, candidates)
+            labels = [label for _, label in candidates]
+            await message.answer(
+                "Бачу в повідомленні кілька дат/часів і не хочу вгадати неправильно — "
+                "яка з них час нагадування?",
+                reply_markup=clarify_due_date_keyboard(labels),
+            )
+            return
+
     parsed = get_parser().parse(message.text, now)
-
-    async with async_session_factory() as session:
-        task = await create_task(
-            session,
-            message.from_user.id,
-            parsed.title,
-            parsed.due_at,
-            now,
-            recurrence_days=parsed.recurrence_days,
-        )
-        await session.commit()
-        task_id = task.id
-
-    if parsed.due_at:
-        reply = f"Записав! Нагадаю до {parsed.due_at.strftime('%d.%m %H:%M')}."
-    else:
-        reply = "Записав! Нагадуватиму регулярно, поки не відмітиш виконаним."
-
-    if parsed.recurrence_days:
-        cadence = "щодня" if parsed.recurrence_days == 1 else (
-            "щотижня" if parsed.recurrence_days == 7 else f"кожні {parsed.recurrence_days} дні(в)"
-        )
-        reply += (
-            f" Це повторюване завдання — нагадуватиму {cadence}: після «Виконано» "
-            "воно не закриється, а повернеться на наступний раз."
-        )
-
+    task_id, reply = await create_task_and_build_reply(
+        message.from_user.id, parsed.title, parsed.due_at, parsed.recurrence_days, now
+    )
     await message.answer(reply, reply_markup=delete_only_keyboard(task_id))
     logger.info("Created task %s for user %s", task_id, message.from_user.id)
+
+
+@router.callback_query(F.data.startswith("clarify:"))
+async def handle_clarify(callback: CallbackQuery) -> None:
+    from app.ai.fallback import extract_recurrence_days
+
+    idx = parse_clarify_callback(callback.data)
+    pending = _pending_clarifications.pop(callback.from_user.id, None)
+    if pending is None:
+        await callback.answer("Час очікування вийшов, напиши задачу ще раз.")
+        return
+
+    text, candidates = pending
+    if idx >= len(candidates):
+        await callback.answer("Помилка.")
+        return
+
+    now = datetime.now()
+    due_at, _ = candidates[idx]
+    task_id, reply = await create_task_and_build_reply(
+        callback.from_user.id, text.strip(), due_at, extract_recurrence_days(text), now
+    )
+    await callback.answer("Записано!")
+    try:
+        await callback.message.edit_text(reply, reply_markup=delete_only_keyboard(task_id))
+    except Exception:
+        logger.debug("Could not update clarification message", exc_info=True)
+    logger.info("Created task %s for user %s (clarified)", task_id, callback.from_user.id)
 
 
 @router.callback_query(F.data.startswith("task:"))

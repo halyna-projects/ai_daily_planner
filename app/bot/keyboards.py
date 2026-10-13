@@ -33,3 +33,18 @@ def delete_only_keyboard(task_id: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🗑 Видалити", callback_data=reminder_callback_data(task_id, "delete")),
     ]
     return InlineKeyboardMarkup(inline_keyboard=[buttons])
+
+
+def clarify_due_date_keyboard(labels: list[str]) -> InlineKeyboardMarkup:
+    """One button per date/time candidate found in an ambiguous message,
+    asked instead of silently guessing which one is the actual reminder."""
+
+    buttons = [
+        [InlineKeyboardButton(text=label, callback_data=f"clarify:{i}")]
+        for i, label in enumerate(labels)
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def parse_clarify_callback(data: str) -> int:
+    return int(data.split(":")[1])

@@ -14,7 +14,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from app.ai.fallback import extract_due_at
+from app.ai.fallback import extract_due_at, extract_recurrence_days
 from app.bot.keyboards import confirmation_keyboard
 from app.bot.task_replies import create_task_and_build_reply
 
@@ -170,7 +170,10 @@ async def got_remind_choice(callback: CallbackQuery, state: FSMContext) -> None:
         await _ask_recurrence(callback.message, state)
     else:
         await state.set_state(NewTaskForm.remind_custom)
-        await callback.message.edit_text("Напиши, коли саме нагадати, наприклад: 27.10.2026 21:00.")
+        await callback.message.edit_text(
+            "Напиши конкретні дату і час, наприклад: 27.10.2026 21:00.\n"
+            "(Періодичність на кшталт «щодня» спитаю наступним кроком.)"
+        )
 
     await callback.answer()
 
@@ -183,14 +186,35 @@ async def got_remind_custom(message: Message, state: FSMContext) -> None:
 
     now = datetime.now()
     remind_at = extract_due_at(message.text, now)
-    if remind_at is None:
-        await message.answer("Не зрозумів, спробуй ще раз, наприклад: 27.10.2026 21:00.")
+    if remind_at is not None:
+        await state.update_data(remind_at=remind_at.isoformat())
+        await state.set_state(None)
+        await message.answer(f"Нагадаю о {remind_at.strftime('%d.%m %H:%M')}.")
+        await _ask_recurrence(message, state)
         return
 
-    await state.update_data(remind_at=remind_at.isoformat())
-    await state.set_state(None)
-    await message.answer(f"Нагадаю о {remind_at.strftime('%d.%m %H:%M')}.")
-    await _ask_recurrence(message, state)
+    # She likely answered the *next* question early -- "щодня"/"щоденно"
+    # etc. here means a recurrence cadence, not a date/time. Recognize it
+    # instead of just rejecting the message: use the deadline's own time as
+    # the reminder time and apply the cadence directly, skipping the
+    # recurrence step since it's already answered.
+    recurrence_days = extract_recurrence_days(message.text)
+    if recurrence_days is not None:
+        data = await state.get_data()
+        due_at = datetime.fromisoformat(data["due_at"])
+        await state.update_data(remind_at=due_at.isoformat())
+        await state.set_state(None)
+        cadence = "щодня" if recurrence_days == 1 else (
+            "щотижня" if recurrence_days == 7 else f"кожні {recurrence_days} дні(в)"
+        )
+        await message.answer(f"Зрозумів: нагадуватиму {cadence}, починаючи з {due_at.strftime('%d.%m %H:%M')}.")
+        await _finish(message, state, message.from_user.id, recurrence_days)
+        return
+
+    await message.answer(
+        "Тут потрібні конкретні дата й час, наприклад: 27.10.2026 21:00. "
+        "Періодичність (щодня тощо) спитаю наступним кроком."
+    )
 
 
 async def _ask_recurrence(message: Message, state: FSMContext) -> None:

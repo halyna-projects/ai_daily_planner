@@ -12,6 +12,7 @@ date/time question."""
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 
 from aiogram import F, Router
@@ -26,6 +27,9 @@ from app.bot.task_replies import create_task_and_build_reply
 
 logger = logging.getLogger(__name__)
 router = Router(name="new_task_wizard")
+
+# A bare "09:00" typed at the "when to remind" step, with no date in it.
+_BARE_TIME_RE = re.compile(r"^\s*([01]?\d|2[0-3]):([0-5]\d)\s*$")
 
 
 class NewTaskForm(StatesGroup):
@@ -237,7 +241,10 @@ async def got_remind_choice(callback: CallbackQuery, state: FSMContext) -> None:
         return
     else:
         await state.set_state(NewTaskForm.remind_custom)
-        await callback.message.edit_text("Напиши конкретні дату і час, наприклад: 27.10.2026 21:00.")
+        await callback.message.edit_text(
+            f"Напиши дату і час, наприклад: 27.10.2026 21:00 -- або просто час "
+            f"(наприклад 21:00), тоді це буде {due_at.strftime('%d.%m')}, в день дедлайну."
+        )
 
     await callback.answer()
 
@@ -248,8 +255,18 @@ async def got_remind_custom(message: Message, state: FSMContext) -> None:
         await message.answer("Спочатку заверши створення задачі (або почни заново: /new).")
         return
 
-    now = datetime.now()
-    remind_at = extract_due_at(message.text, now)
+    bare_time = _BARE_TIME_RE.match(message.text)
+    if bare_time:
+        # Just a time, no date -- apply it to the deadline's own date
+        # (not "today/tomorrow relative to now", which would silently
+        # ignore the deadline date already chosen earlier in the flow).
+        data = await state.get_data()
+        due_at = datetime.fromisoformat(data["due_at"])
+        hour, minute = int(bare_time.group(1)), int(bare_time.group(2))
+        remind_at = due_at.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    else:
+        remind_at = extract_due_at(message.text, datetime.now())
+
     if remind_at is None:
         await message.answer("Не зрозумів, спробуй ще раз, наприклад: 27.10.2026 21:00.")
         return

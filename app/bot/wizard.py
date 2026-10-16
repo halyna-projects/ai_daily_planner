@@ -56,7 +56,8 @@ def _remind_type_keyboard(with_date_option: bool) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="✏️ Інше число днів", callback_data="remind:rec:custom")],
     ]
     if with_date_option:
-        rows.append([InlineKeyboardButton(text="📅 Дата і час (одноразово)", callback_data="remind:custom_datetime")])
+        rows.append([InlineKeyboardButton(text="📌 У дату дедлайну", callback_data="remind:same")])
+        rows.append([InlineKeyboardButton(text="📅 Інша дата і час (одноразово)", callback_data="remind:custom_datetime")])
     else:
         rows.append([InlineKeyboardButton(text="Одноразово", callback_data="remind:none")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -301,6 +302,20 @@ async def got_remind_none(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     await callback.message.edit_text("Одноразово.")
+    await callback.answer()
+    await _finish(callback.message, state, callback.from_user.id)
+
+
+@router.callback_query(F.data == "remind:same")
+async def got_remind_same(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    if "due_at" not in data or not data["due_at"]:
+        await callback.answer("Почни з /new.")
+        return
+
+    due_at = datetime.fromisoformat(data["due_at"])
+    await state.update_data(remind_at=due_at.isoformat())
+    await callback.message.edit_text(f"Нагадаю: {due_at.strftime('%d.%m %H:%M')} (у дату дедлайну).")
     await callback.answer()
     await _finish(callback.message, state, callback.from_user.id)
 

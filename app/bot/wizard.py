@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import calendar as calendar_module
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from aiogram import F, Router
@@ -239,11 +239,32 @@ async def got_minute_choice(callback: CallbackQuery, state: FSMContext) -> None:
         await state.update_data(due_at=due_at.isoformat())
         await callback.message.edit_text(f"Дедлайн: {due_at.strftime('%d.%m %H:%M')}.")
         await callback.message.answer("Коли нагадати?", reply_markup=_remind_type_keyboard(with_date_option=True))
+    elif phase == "remind_time_only":
+        # Daily/weekly: just a time, no date -- starts at the nearest
+        # upcoming occurrence of that time and repeats from there.
+        now = datetime.now()
+        remind_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if remind_at <= now:
+            remind_at += timedelta(days=1)
+        await state.update_data(remind_at=remind_at.isoformat())
+        cadence = _cadence_label(data.get("recurrence_days"))
+        await callback.message.edit_text(
+            f"{cadence}, о {remind_at.strftime('%H:%M')} (починаючи з {remind_at.strftime('%d.%m')})."
+        )
+        await _finish(callback.message, state, callback.from_user.id)
     else:
+        # "reminder" phase: a full date+time -- either a genuine one-off
+        # reminder, or the starting date for a monthly/custom-days cadence
+        # (those matter enough to ask, unlike daily/weekly).
         year, month, day = (int(x) for x in data["reminder_date"].split("-"))
         remind_at = datetime(year, month, day, hour, minute)
         await state.update_data(remind_at=remind_at.isoformat())
-        await callback.message.edit_text(f"Нагадаю: {remind_at.strftime('%d.%m %H:%M')}.")
+        recurrence_days = data.get("recurrence_days")
+        if recurrence_days:
+            cadence = _cadence_label(recurrence_days)
+            await callback.message.edit_text(f"{cadence}, починаючи з {remind_at.strftime('%d.%m %H:%M')}.")
+        else:
+            await callback.message.edit_text(f"Нагадаю: {remind_at.strftime('%d.%m %H:%M')}.")
         await _finish(callback.message, state, callback.from_user.id)
 
 
@@ -259,6 +280,19 @@ async def got_remind_none(callback: CallbackQuery, state: FSMContext) -> None:
     await _finish(callback.message, state, callback.from_user.id)
 
 
+def _calendar_start(data: dict) -> tuple[int, int]:
+    """Default the calendar to the deadline's own month when there is one,
+    since that's the most likely month someone picking a reminder date
+    actually wants."""
+
+    due_at_raw = data.get("due_at")
+    if due_at_raw:
+        due_at = datetime.fromisoformat(due_at_raw)
+        return due_at.year, due_at.month
+    now = datetime.now()
+    return now.year, now.month
+
+
 @router.callback_query(F.data == "remind:custom_datetime")
 async def got_remind_custom_datetime(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
@@ -266,33 +300,10 @@ async def got_remind_custom_datetime(callback: CallbackQuery, state: FSMContext)
         await callback.answer("Почни з /new.")
         return
 
-    due_at = datetime.fromisoformat(data["due_at"])
     await state.update_data(phase="reminder")
     await callback.answer()
-    await callback.message.edit_text(
-        "Дата нагадування:", reply_markup=_calendar_keyboard(due_at.year, due_at.month)
-    )
-
-
-async def _apply_recurrence(message: Message, state: FSMContext, recurrence_days: int) -> None:
-    """A recurring cadence reuses the deadline's own time of day (if there
-    is one) as the reminder time -- no separate date/time to pick, since
-    it'll just recur at that same time each cycle."""
-
-    data = await state.get_data()
-    due_at_raw = data.get("due_at")
-    cadence = _cadence_label(recurrence_days)
-
-    await state.update_data(recurrence_days=recurrence_days)
-    if due_at_raw:
-        due_at = datetime.fromisoformat(due_at_raw)
-        await state.update_data(remind_at=due_at.isoformat())
-        await message.answer(
-            f"Нагадуватиму {cadence.lower()} о {due_at.strftime('%H:%M')}, "
-            f"починаючи з {due_at.strftime('%d.%m')}."
-        )
-    else:
-        await message.answer(f"{cadence}.")
+    year, month = _calendar_start(data)
+    await callback.message.edit_text("Дата нагадування:", reply_markup=_calendar_keyboard(year, month))
 
 
 @router.callback_query(F.data.startswith("remind:rec:"))
@@ -313,8 +324,7 @@ async def got_remind_recurrence(callback: CallbackQuery, state: FSMContext) -> N
     preset = {"daily": 1, "weekly": 7, "monthly": 30}
     recurrence_days = preset[choice] if choice in preset else int(choice)
     await callback.answer()
-    await _apply_recurrence(callback.message, state, recurrence_days)
-    await _finish(callback.message, state, callback.from_user.id)
+    await _ask_cadence_time(callback.message, state, recurrence_days)
 
 
 @router.message(NewTaskForm.recurrence_custom, F.text)
@@ -329,8 +339,25 @@ async def got_recurrence_custom(message: Message, state: FSMContext) -> None:
 
     recurrence_days = int(message.text.strip())
     await state.set_state(None)
-    await _apply_recurrence(message, state, recurrence_days)
-    await _finish(message, state, message.from_user.id)
+    await _ask_cadence_time(message, state, recurrence_days)
+
+
+async def _ask_cadence_time(message: Message, state: FSMContext, recurrence_days: int) -> None:
+    """Daily/weekly only need a time (it starts ASAP and repeats from
+    there); longer cadences (monthly, a custom day count) ask for a full
+    date too, since the specific starting day matters more at that scale."""
+
+    cadence = _cadence_label(recurrence_days)
+    await state.update_data(recurrence_days=recurrence_days)
+
+    if recurrence_days in (1, 7):
+        await state.update_data(phase="remind_time_only")
+        await message.answer(f"{cadence}. Обери годину:", reply_markup=_hour_keyboard())
+    else:
+        await state.update_data(phase="reminder")
+        data = await state.get_data()
+        year, month = _calendar_start(data)
+        await message.answer(f"{cadence}. Обери дату:", reply_markup=_calendar_keyboard(year, month))
 
 
 async def _finish(message: Message, state: FSMContext, telegram_user_id: int) -> None:

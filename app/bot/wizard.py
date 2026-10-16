@@ -19,7 +19,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.bot.keyboards import confirmation_keyboard
-from app.bot.task_replies import create_task_and_build_reply
+from app.bot.task_replies import create_task_and_build_reply, update_task_and_build_reply
+from app.db import async_session_factory
+from app.services.tasks import get_task
 
 logger = logging.getLogger(__name__)
 router = Router(name="new_task_wizard")
@@ -145,6 +147,29 @@ async def restart_wizard(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(NewTaskForm.title)
     await callback.answer()
     await callback.message.answer(_TITLE_PROMPT)
+
+
+@router.callback_query(F.data.startswith("edit:"))
+async def start_edit(callback: CallbackQuery, state: FSMContext) -> None:
+    # Re-runs the task through the exact same deadline/cadence questions
+    # as /new, ending in an update instead of a new task -- the title
+    # itself is kept as-is (fixing a typo there is what the plain 🗑
+    # delete-and-resend already covers).
+    task_id = int(callback.data.removeprefix("edit:"))
+    async with async_session_factory() as session:
+        task = await get_task(session, task_id)
+    if task is None:
+        await callback.answer("Задачу не знайдено.")
+        return
+
+    await state.update_data(title=task.title, phase="deadline", editing_task_id=task_id)
+    await state.set_state(None)
+    await callback.answer()
+    now = datetime.now()
+    await callback.message.answer(
+        f"Редагую «{task.title}». Дата дедлайну:",
+        reply_markup=_calendar_keyboard(now.year, now.month, extra_button=("Без дедлайну", "deadline:none")),
+    )
 
 
 @router.message(NewTaskForm.title, F.text)
@@ -366,6 +391,7 @@ async def _finish(message: Message, state: FSMContext, telegram_user_id: int) ->
     recurrence_days = data.get("recurrence_days")
     due_at_raw = data.get("due_at")
     remind_at_raw = data.get("remind_at")
+    editing_task_id = data.get("editing_task_id")
 
     due_at = datetime.fromisoformat(remind_at_raw) if remind_at_raw else (
         datetime.fromisoformat(due_at_raw) if due_at_raw else None
@@ -373,6 +399,16 @@ async def _finish(message: Message, state: FSMContext, telegram_user_id: int) ->
 
     await state.clear()
     now = datetime.now()
-    task_id, reply = await create_task_and_build_reply(telegram_user_id, title, due_at, recurrence_days, now)
+
+    if editing_task_id:
+        result = await update_task_and_build_reply(editing_task_id, title, due_at, recurrence_days, now)
+        if result is None:
+            await message.answer("Цю задачу вже видалено — редагування скасовано.")
+            return
+        task_id, reply = result
+    else:
+        task_id, reply = await create_task_and_build_reply(telegram_user_id, title, due_at, recurrence_days, now)
+
     await message.answer(reply, reply_markup=confirmation_keyboard(task_id))
-    logger.info("Created task %s for user %s (wizard)", task_id, telegram_user_id)
+    action = "edited" if editing_task_id else "created"
+    logger.info("%s task %s for user %s (wizard)", action, task_id, telegram_user_id)

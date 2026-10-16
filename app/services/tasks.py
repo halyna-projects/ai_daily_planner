@@ -75,6 +75,33 @@ async def snooze(session: AsyncSession, task: Task, now: datetime) -> None:
     await session.flush()
 
 
+async def update_task(
+    session: AsyncSession,
+    task: Task,
+    title: str,
+    due_at: datetime | None,
+    recurrence_days: int | None,
+    now: datetime,
+) -> None:
+    """Re-run a task through the same fields /new asks for, in place --
+    the edit path, so fixing a wrong date/cadence doesn't mean deleting
+    and recreating the task (losing its id, reminder history etc.).
+    Reopens a done task and resets its nag state, same as a fresh one."""
+
+    next_reminder_at = due_at if due_at else now + timedelta(
+        minutes=settings.default_reminder_interval_minutes
+    )
+
+    task.title = title
+    task.due_at = due_at
+    task.recurrence_days = recurrence_days
+    task.next_reminder_at = next_reminder_at
+    task.reminder_count = 0
+    task.status = TaskStatus.PENDING
+    task.completed_at = None
+    await session.flush()
+
+
 async def delete_task(session: AsyncSession, task: Task) -> None:
     """Remove a task outright -- the only way to fix a typo or a message
     sent before you finished typing, since there's no in-place edit yet."""

@@ -15,6 +15,7 @@ from app.services.tasks import (
     mark_done,
     register_reminder_sent,
     snooze,
+    update_task,
 )
 
 NOW = datetime(2026, 10, 14, 10, 0, 0)
@@ -225,3 +226,35 @@ async def test_delete_all_tasks_wipes_pending_and_done_for_that_user_only(sessio
     assert await get_task(session, open_task.id) is None
     assert await get_task(session, done_task.id) is None
     assert await get_task(session, other_user_task.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_update_task_changes_fields_and_resets_nag_state(session):
+    task = await create_task(session, telegram_user_id=1, title="Старе", due_at=None, now=NOW)
+    await register_reminder_sent(session, task, NOW)
+    await session.commit()
+    assert task.reminder_count == 1
+
+    new_due = NOW + timedelta(days=3)
+    await update_task(session, task, "Нове", new_due, recurrence_days=7, now=NOW)
+    await session.commit()
+
+    assert task.title == "Нове"
+    assert task.due_at == new_due
+    assert task.recurrence_days == 7
+    assert task.next_reminder_at == new_due
+    assert task.reminder_count == 0
+
+
+@pytest.mark.asyncio
+async def test_update_task_reopens_a_done_task(session):
+    task = await create_task(session, telegram_user_id=1, title="Закрита", due_at=None, now=NOW)
+    await mark_done(session, task, NOW)
+    await session.commit()
+    assert task.status == TaskStatus.DONE
+
+    await update_task(session, task, "Закрита", NOW + timedelta(days=1), recurrence_days=None, now=NOW)
+    await session.commit()
+
+    assert task.status == TaskStatus.PENDING
+    assert task.completed_at is None

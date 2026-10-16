@@ -34,6 +34,22 @@ def delete_only_keyboard(task_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[buttons])
 
 
+def task_row_keyboard(task_id: int) -> InlineKeyboardMarkup:
+    """Used wherever an existing task is listed (/today, /tasks): edit
+    re-runs it through the same date/cadence questions as /new, in place,
+    instead of delete-and-recreate. "Нова задача" is repeated on every
+    row (not just once at the top) so a long list never means scrolling
+    back up to start the next task."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Редагувати", callback_data=f"edit:{task_id}")],
+            [InlineKeyboardButton(text="🗑 Видалити", callback_data=reminder_callback_data(task_id, "delete"))],
+            [InlineKeyboardButton(text="➕ Нова задача", callback_data="wiz:new")],
+        ]
+    )
+
+
 def confirmation_keyboard(task_id: int) -> InlineKeyboardMarkup:
     """Shown right after a task is created: delete (undo a typo), a
     one-tap way to start the next task's /new wizard, and a way to see

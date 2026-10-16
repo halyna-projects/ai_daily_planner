@@ -12,10 +12,10 @@ from app.bot.keyboards import (
     clarify_due_date_keyboard,
     clear_all_confirm_keyboard,
     confirmation_keyboard,
-    delete_only_keyboard,
     parse_clarify_callback,
     parse_reminder_callback,
     reminder_keyboard,
+    task_row_keyboard,
 )
 from app.bot.task_replies import create_task_and_build_reply
 from app.db import async_session_factory
@@ -84,7 +84,7 @@ async def handle_today(message: Message) -> None:
         await message.answer("На сьогодні задач немає.")
         return
 
-    await message.answer(f"Задачі на сьогодні: {len(tasks)}. Щоб видалити помилкову — тисни 🗑 під нею.")
+    await message.answer(f"Задачі на сьогодні: {len(tasks)}. Під кожною — ✏️ редагувати або 🗑 видалити.")
     for task in tasks:
         # Full date+time, not just the time -- /today also lists tasks
         # merely *created* today whose due_at can be a different day
@@ -99,7 +99,7 @@ async def handle_today(message: Message) -> None:
         else:
             mark = "✅" if task.status == TaskStatus.DONE else "⏳"
             due = f" (до {task.due_at.strftime('%d.%m %H:%M')})" if task.due_at else ""
-        await message.answer(f"{mark} {task.title}{due}", reply_markup=delete_only_keyboard(task.id))
+        await message.answer(f"{mark} {task.title}{due}", reply_markup=task_row_keyboard(task.id))
 
 
 async def _send_tasks_list(telegram_user_id: int, answer) -> None:
@@ -110,11 +110,11 @@ async def _send_tasks_list(telegram_user_id: int, answer) -> None:
         await answer("Активних задач немає.")
         return
 
-    await answer(f"Активних задач: {len(tasks)}. Щоб видалити помилкову — тисни 🗑 під нею.")
+    await answer(f"Активних задач: {len(tasks)}. Під кожною — ✏️ редагувати або 🗑 видалити.")
     for task in tasks:
         due = f"\nдо {task.due_at.strftime('%d.%m %H:%M')}" if task.due_at else ""
         cadence = " 🔁" if task.recurrence_days else ""
-        await answer(f"{task.title}{due}{cadence}", reply_markup=delete_only_keyboard(task.id))
+        await answer(f"{task.title}{due}{cadence}", reply_markup=task_row_keyboard(task.id))
 
 
 @router.message(Command("tasks"))

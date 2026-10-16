@@ -145,7 +145,17 @@ async def got_recurrence_custom(message: Message, state: FSMContext) -> None:
 
 
 async def message_ask_deadline(message: Message, state: FSMContext) -> None:
-    await message.answer("Коли дедлайн?", reply_markup=_deadline_keyboard())
+    data = await state.get_data()
+    if data.get("recurrence_days"):
+        # A recurring task doesn't have a separate "deadline" concept --
+        # this time just is the one it repeats at each cycle, so there's no
+        # extra "when to remind relative to the deadline" question after it.
+        await message.answer(
+            "З якого дня і о котрій годині нагадувати (повторюватиметься щоразу о цій же годині)?",
+            reply_markup=_deadline_keyboard(),
+        )
+    else:
+        await message.answer("Коли дедлайн?", reply_markup=_deadline_keyboard())
 
 
 @router.callback_query(
@@ -173,6 +183,11 @@ async def got_deadline_choice(callback: CallbackQuery, state: FSMContext) -> Non
     elif callback.data == "wiz:tomorrow":
         due_at = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
         await state.update_data(due_at=due_at.isoformat())
+        if data.get("recurrence_days"):
+            await _finish_recurring_at(callback.message.edit_text, state, due_at)
+            await callback.answer()
+            await _finish(callback.message, state, callback.from_user.id)
+            return
         await callback.message.edit_text(f"Дедлайн: {due_at.strftime('%d.%m %H:%M')}.")
         await _ask_remind_offset(callback.message, state)
     else:
@@ -182,6 +197,11 @@ async def got_deadline_choice(callback: CallbackQuery, state: FSMContext) -> Non
         if due_at <= now:
             due_at += timedelta(days=1)
         await state.update_data(due_at=due_at.isoformat())
+        if data.get("recurrence_days"):
+            await _finish_recurring_at(callback.message.edit_text, state, due_at)
+            await callback.answer()
+            await _finish(callback.message, state, callback.from_user.id)
+            return
         await callback.message.edit_text(f"Дедлайн: {due_at.strftime('%d.%m %H:%M')}.")
         await _ask_remind_offset(callback.message, state)
 
@@ -202,8 +222,27 @@ async def got_deadline_custom(message: Message, state: FSMContext) -> None:
 
     await state.update_data(due_at=due_at.isoformat())
     await state.set_state(None)
+
+    data = await state.get_data()
+    if data.get("recurrence_days"):
+        await _finish_recurring_at(message.answer, state, due_at)
+        await _finish(message, state, message.from_user.id)
+        return
+
     await message.answer(f"Дедлайн: {due_at.strftime('%d.%m %H:%M')}.")
     await _ask_remind_offset(message, state)
+
+
+async def _finish_recurring_at(announce, state: FSMContext, due_at: datetime) -> None:
+    """A recurring task's chosen date/time IS its reminder time, repeating
+    every cycle -- no separate "when to remind" offset makes sense here."""
+
+    await state.update_data(remind_at=due_at.isoformat())
+    data = await state.get_data()
+    cadence = _cadence_label(data.get("recurrence_days")).lower()
+    await announce(
+        f"Нагадуватиму {cadence} о {due_at.strftime('%H:%M')}, починаючи з {due_at.strftime('%d.%m')}."
+    )
 
 
 async def _ask_remind_offset(message: Message, state: FSMContext) -> None:

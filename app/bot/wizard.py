@@ -121,10 +121,13 @@ async def _extra_button_for_phase(state: FSMContext) -> Optional[tuple[str, str]
     return ("Без дедлайну", "deadline:none")
 
 
+_TITLE_PROMPT = "Введи завдання до виконання:"
+
+
 @router.message(Command("new"))
 async def start_wizard(message: Message, state: FSMContext) -> None:
     await state.set_state(NewTaskForm.title)
-    await message.answer("Що потрібно зробити?")
+    await message.answer(_TITLE_PROMPT)
 
 
 @router.callback_query(F.data == "wiz:new")
@@ -133,7 +136,7 @@ async def restart_wizard(callback: CallbackQuery, state: FSMContext) -> None:
     # next task doesn't mean scrolling up to find and retype /new.
     await state.set_state(NewTaskForm.title)
     await callback.answer()
-    await callback.message.answer("Що потрібно зробити?")
+    await callback.message.answer(_TITLE_PROMPT)
 
 
 @router.message(NewTaskForm.title, F.text)
@@ -199,13 +202,16 @@ async def got_calendar_action(callback: CallbackQuery, state: FSMContext) -> Non
         return
 
     date_str = action.removeprefix("pick:")
+    year, month, day = (int(x) for x in date_str.split("-"))
+    friendly_date = f"{day:02d}.{month:02d}.{year:04d}"
+
     phase = data.get("phase", "deadline")
     if phase == "deadline":
         await state.update_data(deadline_date=date_str)
     else:
         await state.update_data(reminder_date=date_str)
     await callback.answer()
-    await callback.message.edit_text(f"Дата: {date_str}. Обери годину:", reply_markup=_hour_keyboard())
+    await callback.message.edit_text(f"Дата: {friendly_date}. Обери годину:", reply_markup=_hour_keyboard())
 
 
 @router.callback_query(F.data.startswith("hr:"))

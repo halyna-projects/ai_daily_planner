@@ -76,15 +76,19 @@ async def handle_today(message: Message) -> None:
 
     lines = ["Задачі на сьогодні:"]
     for task in tasks:
+        # Full date+time, not just the time -- /today also lists tasks
+        # merely *created* today whose due_at can be a different day
+        # entirely (see list_today), so a bare time would misleadingly
+        # read as "today at this time".
         if task.recurrence_days:
             done_today = (
                 task.completed_at is not None and task.completed_at.date() == now.date()
             )
             mark = "✅" if done_today else "🔁"
-            due = f" (повторюється, до {task.due_at.strftime('%H:%M')})" if task.due_at else " (повторюється)"
+            due = f" (повторюється, до {task.due_at.strftime('%d.%m %H:%M')})" if task.due_at else " (повторюється)"
         else:
             mark = "✅" if task.status == TaskStatus.DONE else "⏳"
-            due = f" (до {task.due_at.strftime('%H:%M')})" if task.due_at else ""
+            due = f" (до {task.due_at.strftime('%d.%m %H:%M')})" if task.due_at else ""
         lines.append(f"{mark} {task.title}{due}")
     await message.answer("\n".join(lines))
 

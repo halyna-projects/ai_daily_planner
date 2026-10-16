@@ -10,6 +10,7 @@ from aiogram.types import CallbackQuery, Message
 from app.ai.claude_client import TaskParser
 from app.bot.keyboards import (
     clarify_due_date_keyboard,
+    clear_all_confirm_keyboard,
     confirmation_keyboard,
     delete_only_keyboard,
     parse_clarify_callback,
@@ -19,7 +20,15 @@ from app.bot.keyboards import (
 from app.bot.task_replies import create_task_and_build_reply
 from app.db import async_session_factory
 from app.models import TaskStatus
-from app.services.tasks import delete_task, get_task, list_pending, list_today, mark_done, snooze
+from app.services.tasks import (
+    delete_all_tasks,
+    delete_task,
+    get_task,
+    list_pending,
+    list_today,
+    mark_done,
+    snooze,
+)
 
 logger = logging.getLogger(__name__)
 router = Router(name="planner")
@@ -50,6 +59,7 @@ WELCOME = (
     "/new — покроково, календар і години замість набору тексту\n"
     "/today — список задач на сьогодні\n"
     "/tasks — всі активні задачі (можна видалити помилкові)\n"
+    "/clear — видалити геть усі задачі (з підтвердженням)\n"
     "/help — ця підказка"
 )
 
@@ -74,7 +84,7 @@ async def handle_today(message: Message) -> None:
         await message.answer("На сьогодні задач немає.")
         return
 
-    lines = ["Задачі на сьогодні:"]
+    await message.answer(f"Задачі на сьогодні: {len(tasks)}. Щоб видалити помилкову — тисни 🗑 під нею.")
     for task in tasks:
         # Full date+time, not just the time -- /today also lists tasks
         # merely *created* today whose due_at can be a different day
@@ -89,8 +99,7 @@ async def handle_today(message: Message) -> None:
         else:
             mark = "✅" if task.status == TaskStatus.DONE else "⏳"
             due = f" (до {task.due_at.strftime('%d.%m %H:%M')})" if task.due_at else ""
-        lines.append(f"{mark} {task.title}{due}")
-    await message.answer("\n".join(lines))
+        await message.answer(f"{mark} {task.title}{due}", reply_markup=delete_only_keyboard(task.id))
 
 
 async def _send_tasks_list(telegram_user_id: int, answer) -> None:
@@ -117,6 +126,30 @@ async def handle_tasks(message: Message) -> None:
 async def handle_tasks_button(callback: CallbackQuery) -> None:
     await callback.answer()
     await _send_tasks_list(callback.from_user.id, callback.message.answer)
+
+
+@router.message(Command("clear"))
+async def handle_clear(message: Message) -> None:
+    await message.answer(
+        "⚠️ Видалити геть усі задачі (і активні, і виконані)? Це незворотно.",
+        reply_markup=clear_all_confirm_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "clear:cancel")
+async def handle_clear_cancel(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await callback.message.edit_text("Скасовано, нічого не видалено.")
+
+
+@router.callback_query(F.data == "clear:confirm")
+async def handle_clear_confirm(callback: CallbackQuery) -> None:
+    async with async_session_factory() as session:
+        deleted_count = await delete_all_tasks(session, callback.from_user.id)
+        await session.commit()
+
+    await callback.answer("Видалено")
+    await callback.message.edit_text(f"🗑 Видалено задач: {deleted_count}.")
 
 
 @router.message(F.text)

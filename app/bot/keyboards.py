@@ -64,3 +64,15 @@ def clarify_due_date_keyboard(labels: list[str]) -> InlineKeyboardMarkup:
 
 def parse_clarify_callback(data: str) -> int:
     return int(data.split(":")[1])
+
+
+def clear_all_confirm_keyboard() -> InlineKeyboardMarkup:
+    """A destructive, irreversible bulk delete -- needs an explicit
+    confirm tap, not a single accidental one."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⚠️ Так, видалити все", callback_data="clear:confirm")],
+            [InlineKeyboardButton(text="Скасувати", callback_data="clear:cancel")],
+        ]
+    )

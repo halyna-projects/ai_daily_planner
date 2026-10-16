@@ -31,6 +31,7 @@ async def main() -> None:
         BotCommand(command="new", description="Нова задача (покроково)"),
         BotCommand(command="today", description="Задачі на сьогодні"),
         BotCommand(command="tasks", description="Усі активні задачі"),
+        BotCommand(command="clear", description="Видалити геть усі задачі"),
         BotCommand(command="help", description="Довідка"),
     ])
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -81,6 +81,16 @@ async def delete_task(session: AsyncSession, task: Task) -> None:
 
     await session.delete(task)
     await session.flush()
+
+
+async def delete_all_tasks(session: AsyncSession, telegram_user_id: int) -> int:
+    """Wipe every task (pending or done) for this user -- a full reset for
+    clearing out accumulated test data, not just the active ones /tasks
+    shows. Returns how many were removed."""
+
+    result = await session.execute(delete(Task).where(Task.telegram_user_id == telegram_user_id))
+    await session.flush()
+    return result.rowcount or 0
 
 
 async def register_reminder_sent(session: AsyncSession, task: Task, now: datetime) -> bool:

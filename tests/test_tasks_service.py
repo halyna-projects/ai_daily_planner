@@ -6,6 +6,7 @@ from app.config import get_settings
 from app.models import TaskStatus
 from app.services.tasks import (
     create_task,
+    delete_all_tasks,
     delete_task,
     get_task,
     list_due_reminders,
@@ -207,3 +208,20 @@ async def test_list_pending_only_returns_open_tasks_for_that_user(session):
     pending = await list_pending(session, telegram_user_id=1)
 
     assert [t.id for t in pending] == [open_task.id]
+
+
+@pytest.mark.asyncio
+async def test_delete_all_tasks_wipes_pending_and_done_for_that_user_only(session):
+    open_task = await create_task(session, telegram_user_id=1, title="Відкрита", due_at=None, now=NOW)
+    done_task = await create_task(session, telegram_user_id=1, title="Закрита", due_at=None, now=NOW)
+    await mark_done(session, done_task, NOW)
+    other_user_task = await create_task(session, telegram_user_id=2, title="Чужа", due_at=None, now=NOW)
+    await session.commit()
+
+    deleted_count = await delete_all_tasks(session, telegram_user_id=1)
+    await session.commit()
+
+    assert deleted_count == 2
+    assert await get_task(session, open_task.id) is None
+    assert await get_task(session, done_task.id) is None
+    assert await get_task(session, other_user_task.id) is not None

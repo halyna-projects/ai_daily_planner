@@ -150,6 +150,17 @@ async def list_pending(session: AsyncSession, telegram_user_id: int) -> list[Tas
     return list(result.scalars().all())
 
 
+async def list_all_tasks(session: AsyncSession) -> list[Task]:
+    """Every task, across all users -- used by the web cabinet. The bot is
+    built for a single personal user in practice, so this intentionally
+    isn't scoped by telegram_user_id the way the bot commands are."""
+
+    result = await session.execute(
+        select(Task).order_by(Task.status, Task.due_at.is_(None), Task.due_at, Task.created_at)
+    )
+    return list(result.scalars().all())
+
+
 async def list_today(session: AsyncSession, telegram_user_id: int, now: datetime) -> list[Task]:
     start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end_of_day = start_of_day + timedelta(days=1)

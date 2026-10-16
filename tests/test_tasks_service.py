@@ -9,6 +9,7 @@ from app.services.tasks import (
     delete_all_tasks,
     delete_task,
     get_task,
+    list_all_tasks,
     list_due_reminders,
     list_pending,
     list_today,
@@ -258,3 +259,16 @@ async def test_update_task_reopens_a_done_task(session):
 
     assert task.status == TaskStatus.PENDING
     assert task.completed_at is None
+
+
+@pytest.mark.asyncio
+async def test_list_all_tasks_returns_every_user_and_status(session):
+    pending = await create_task(session, telegram_user_id=1, title="Моя відкрита", due_at=None, now=NOW)
+    done = await create_task(session, telegram_user_id=1, title="Моя закрита", due_at=None, now=NOW)
+    await mark_done(session, done, NOW)
+    other_user = await create_task(session, telegram_user_id=2, title="Чужа", due_at=None, now=NOW)
+    await session.commit()
+
+    tasks = await list_all_tasks(session)
+
+    assert {t.id for t in tasks} == {pending.id, done.id, other_user.id}

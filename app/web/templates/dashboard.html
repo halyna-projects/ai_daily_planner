@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Задачі — Кабінет планувальника{% endblock %}
+{% block content %}
+
+<div class="tabs">
+  {% for f, label in [("all", "Усі"), ("today", "Сьогодні"), ("overdue", "Прострочені"), ("recurring", "Повторювані"), ("done", "Виконані")] %}
+    <a class="tab {% if filter == f %}active{% endif %}" href="/?filter={{ f }}{% if q %}&q={{ q }}{% endif %}">
+      {{ label }} <span class="count">{{ counts[f] }}</span>
+    </a>
+  {% endfor %}
+</div>
+
+<form class="search-form" method="get" action="/">
+  <input type="hidden" name="filter" value="{{ filter }}">
+  <input type="text" name="q" value="{{ q }}" placeholder="Пошук за назвою...">
+  <button type="submit">Шукати</button>
+  {% if q %}<a class="clear-search" href="/?filter={{ filter }}">✕ очистити</a>{% endif %}
+</form>
+
+{% if not tasks %}
+  <p class="empty">Нічого не знайдено.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>Назва</th>
+      <th>Дедлайн / нагадування</th>
+      <th>Повторення</th>
+      <th>Статус</th>
+      <th>Нагадувань</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for task in tasks %}
+    <tr class="{% if task.status.value == 'done' %}row-done{% elif task.due_at and task.due_at < now and task.status.value == 'pending' %}row-overdue{% endif %}">
+      <td><a class="task-title" href="/tasks/{{ task.id }}">{{ task.title }}</a></td>
+      <td class="cell-sub">{% if task.due_at %}{{ task.due_at.strftime('%d.%m.%Y %H:%M') }}{% else %}—{% endif %}</td>
+      <td class="cell-sub">{{ cadence_label(task.recurrence_days) or "—" }}</td>
+      <td>
+        {% if task.status.value == 'done' %}
+          <span class="badge done">✅ Виконано</span>
+        {% elif task.recurrence_days %}
+          <span class="badge recurring">🔁 Активна</span>
+        {% elif task.due_at and task.due_at < now %}
+          <span class="badge overdue">⏰ Прострочено</span>
+        {% else %}
+          <span class="badge pending">⏳ Активна</span>
+        {% endif %}
+      </td>
+      <td class="cell-sub">{{ task.reminder_count }}</td>
+      <td class="row-actions">
+        <a class="link-edit" href="/tasks/{{ task.id }}">✏️</a>
+        {% if task.status.value != 'done' %}
+        <form class="inline-form" method="post" action="/tasks/{{ task.id }}/done">
+          <button type="submit" title="Відмітити виконаним">✅</button>
+        </form>
+        {% endif %}
+        <form class="inline-form" method="post" action="/tasks/{{ task.id }}/delete" onsubmit="return confirm('Видалити «{{ task.title }}»?');">
+          <button type="submit" title="Видалити">🗑</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% endblock %}

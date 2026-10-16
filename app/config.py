@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     # How often (seconds) the background scheduler scans for due reminders.
     scheduler_poll_seconds: int = 60
 
+    # Web cabinet (dashboard) -- a single-user admin login, same pattern
+    # as the realtor bot's cabinet.
+    web_host: str = "0.0.0.0"
+    web_port: int = 8010
+    web_admin_username: str = "admin"
+    web_admin_password: str = "change-me"
+
 
 @lru_cache
 def get_settings() -> Settings:

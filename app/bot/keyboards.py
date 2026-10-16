@@ -35,14 +35,18 @@ def delete_only_keyboard(task_id: int) -> InlineKeyboardMarkup:
 
 
 def confirmation_keyboard(task_id: int) -> InlineKeyboardMarkup:
-    """Shown right after a task is created: delete (undo a typo) plus a
-    one-tap way to start the next task's /new wizard without having to
-    scroll up in the chat to find and retype the command."""
+    """Shown right after a task is created: delete (undo a typo), a
+    one-tap way to start the next task's /new wizard, and a way to see
+    everything recorded so far -- all without scrolling up in the chat to
+    find and retype a command (there's also Telegram's own Menu button
+    next to the message box, listing all commands, set via
+    bot.set_my_commands in app/bot/main.py)."""
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🗑 Видалити", callback_data=reminder_callback_data(task_id, "delete"))],
             [InlineKeyboardButton(text="➕ Нова задача (покроково)", callback_data="wiz:new")],
+            [InlineKeyboardButton(text="📋 Усі задачі", callback_data="menu:tasks")],
         ]
     )
 

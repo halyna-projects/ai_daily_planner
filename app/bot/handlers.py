@@ -89,20 +89,30 @@ async def handle_today(message: Message) -> None:
     await message.answer("\n".join(lines))
 
 
-@router.message(Command("tasks"))
-async def handle_tasks(message: Message) -> None:
+async def _send_tasks_list(telegram_user_id: int, answer) -> None:
     async with async_session_factory() as session:
-        tasks = await list_pending(session, message.from_user.id)
+        tasks = await list_pending(session, telegram_user_id)
 
     if not tasks:
-        await message.answer("Активних задач немає.")
+        await answer("Активних задач немає.")
         return
 
-    await message.answer(f"Активних задач: {len(tasks)}. Щоб видалити помилкову — тисни 🗑 під нею.")
+    await answer(f"Активних задач: {len(tasks)}. Щоб видалити помилкову — тисни 🗑 під нею.")
     for task in tasks:
         due = f"\nдо {task.due_at.strftime('%d.%m %H:%M')}" if task.due_at else ""
         cadence = " 🔁" if task.recurrence_days else ""
-        await message.answer(f"{task.title}{due}{cadence}", reply_markup=delete_only_keyboard(task.id))
+        await answer(f"{task.title}{due}{cadence}", reply_markup=delete_only_keyboard(task.id))
+
+
+@router.message(Command("tasks"))
+async def handle_tasks(message: Message) -> None:
+    await _send_tasks_list(message.from_user.id, message.answer)
+
+
+@router.callback_query(F.data == "menu:tasks")
+async def handle_tasks_button(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await _send_tasks_list(callback.from_user.id, callback.message.answer)
 
 
 @router.message(F.text)

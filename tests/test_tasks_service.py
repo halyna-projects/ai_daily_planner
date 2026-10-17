@@ -6,6 +6,7 @@ from app.config import get_settings
 from app.models import TaskStatus
 from app.services.tasks import (
     create_task,
+    defer_recurring,
     delete_all_tasks,
     delete_task,
     get_task,
@@ -272,3 +273,34 @@ async def test_list_all_tasks_returns_every_user_and_status(session):
     tasks = await list_all_tasks(session)
 
     assert {t.id for t in tasks} == {pending.id, done.id, other_user.id}
+
+
+@pytest.mark.asyncio
+async def test_defer_recurring_pushes_to_next_cycle_and_resets_count(session):
+    due = NOW.replace(hour=12, minute=0)
+    task = await create_task(
+        session, telegram_user_id=1, title="Lebara", due_at=due, now=NOW, recurrence_days=1
+    )
+    await register_reminder_sent(session, task, due)
+    await session.commit()
+    assert task.reminder_count == 1
+
+    await defer_recurring(session, task, NOW.replace(hour=14, minute=47))
+    await session.commit()
+
+    assert task.due_at == due + timedelta(days=1)
+    assert task.next_reminder_at == due + timedelta(days=1)
+    assert task.reminder_count == 0
+    assert task.status == TaskStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_defer_recurring_is_a_noop_for_one_off_tasks(session):
+    task = await create_task(session, telegram_user_id=1, title="Разова", due_at=NOW, now=NOW)
+    await session.commit()
+    original_next = task.next_reminder_at
+
+    await defer_recurring(session, task, NOW)
+    await session.commit()
+
+    assert task.next_reminder_at == original_next

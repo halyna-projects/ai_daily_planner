@@ -75,6 +75,26 @@ async def snooze(session: AsyncSession, task: Task, now: datetime) -> None:
     await session.flush()
 
 
+async def defer_recurring(session: AsyncSession, task: Task, now: datetime) -> None:
+    """"⏳ Ще ні" on a recurring task: stop nagging today, catch it again
+    at the next cycle instead (tomorrow for a daily task, etc.) -- unlike
+    leaving a reminder unanswered, which keeps nagging at the normal short
+    interval (same as a one-off task) until this is pressed or the task is
+    marked done. A no-op for non-recurring tasks."""
+
+    if not task.recurrence_days:
+        return
+
+    base = task.due_at or now
+    next_at = base + timedelta(days=task.recurrence_days)
+    while next_at <= now:
+        next_at += timedelta(days=task.recurrence_days)
+    task.due_at = next_at
+    task.next_reminder_at = next_at
+    task.reminder_count = 0
+    await session.flush()
+
+
 async def update_task(
     session: AsyncSession,
     task: Task,

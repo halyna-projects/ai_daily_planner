@@ -51,7 +51,7 @@ async def _tick(bot: Bot) -> None:
                 await bot.send_message(
                     task.telegram_user_id,
                     _reminder_text(task.title, task.reminder_count, escalated),
-                    reply_markup=reminder_keyboard(task.id),
+                    reply_markup=reminder_keyboard(task.id, task.recurrence_days),
                 )
             except Exception:
                 logger.exception("Failed to send reminder for task %s", task.id)

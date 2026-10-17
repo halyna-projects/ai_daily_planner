@@ -21,6 +21,7 @@ from app.bot.task_replies import create_task_and_build_reply
 from app.db import async_session_factory
 from app.models import TaskStatus
 from app.services.tasks import (
+    defer_recurring,
     delete_all_tasks,
     delete_task,
     get_task,
@@ -235,8 +236,14 @@ async def handle_reminder_button(callback: CallbackQuery) -> None:
             except Exception:
                 logger.debug("Could not update reminder message", exc_info=True)
         elif action == "not_yet":
-            await session.commit()
-            await callback.answer("Гаразд, нагадаю ще раз пізніше.")
+            if task.recurrence_days:
+                await defer_recurring(session, task, now)
+                await session.commit()
+                next_at = task.next_reminder_at.strftime("%d.%m %H:%M")
+                await callback.answer(f"Гаразд, нагадаю знову {next_at}.")
+            else:
+                await session.commit()
+                await callback.answer("Гаразд, нагадаю ще раз пізніше.")
         elif action == "snooze":
             await snooze(session, task, now)
             await session.commit()

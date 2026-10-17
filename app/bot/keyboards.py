@@ -12,10 +12,25 @@ def parse_reminder_callback(data: str) -> tuple[int, str]:
     return int(task_id), action
 
 
-def reminder_keyboard(task_id: int) -> InlineKeyboardMarkup:
+def _not_yet_label(recurrence_days: int | None) -> str:
+    if recurrence_days is None:
+        return "⏳ Ще ні"
+    if recurrence_days == 1:
+        return "⏳ Ще ні (до завтра)"
+    if recurrence_days == 7:
+        return "⏳ Ще ні (на тиждень)"
+    return f"⏳ Ще ні (через {recurrence_days} дн.)"
+
+
+def reminder_keyboard(task_id: int, recurrence_days: int | None = None) -> InlineKeyboardMarkup:
+    """`recurrence_days` only changes the "Ще ні" button's label -- for a
+    recurring task it defers to the next cycle (see defer_recurring in
+    app/services/tasks.py), so the button should say so up front rather
+    than silently behaving differently than a one-off task's "Ще ні"."""
+
     row1 = [
         InlineKeyboardButton(text="✅ Виконано", callback_data=reminder_callback_data(task_id, "done")),
-        InlineKeyboardButton(text="⏳ Ще ні", callback_data=reminder_callback_data(task_id, "not_yet")),
+        InlineKeyboardButton(text=_not_yet_label(recurrence_days), callback_data=reminder_callback_data(task_id, "not_yet")),
         InlineKeyboardButton(text="🔁 Перенести", callback_data=reminder_callback_data(task_id, "snooze")),
     ]
     row2 = [

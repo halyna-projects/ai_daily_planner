@@ -85,7 +85,7 @@ async def handle_today(message: Message) -> None:
         await message.answer("На сьогодні задач немає.")
         return
 
-    await message.answer(f"Задачі на сьогодні: {len(tasks)}. Під кожною — ✏️ редагувати або 🗑 видалити.")
+    await message.answer(f"Задачі на сьогодні: {len(tasks)}.")
     for task in tasks:
         # Full date+time, not just the time -- /today also lists tasks
         # merely *created* today whose due_at can be a different day
@@ -111,7 +111,7 @@ async def _send_tasks_list(telegram_user_id: int, answer) -> None:
         await answer("Активних задач немає.")
         return
 
-    await answer(f"Активних задач: {len(tasks)}. Під кожною — ✏️ редагувати або 🗑 видалити.")
+    await answer(f"Активних задач: {len(tasks)}.")
     for task in tasks:
         due = f"\nдо {task.due_at.strftime('%d.%m %H:%M')}" if task.due_at else ""
         cadence = " 🔁" if task.recurrence_days else ""

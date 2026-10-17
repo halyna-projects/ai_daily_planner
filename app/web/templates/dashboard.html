@@ -33,12 +33,12 @@
   </thead>
   <tbody>
     {% for task in tasks %}
-    <tr class="{% if task.status.value == 'done' %}row-done{% elif task.due_at and task.due_at < now and task.status.value == 'pending' %}row-overdue{% endif %}">
+    <tr class="{% if task.status == 'done' %}row-done{% elif task.due_at and task.due_at < now and task.status == 'pending' %}row-overdue{% endif %}">
       <td><a class="task-title" href="/tasks/{{ task.id }}">{{ task.title }}</a></td>
       <td class="cell-sub">{% if task.due_at %}{{ task.due_at.strftime('%d.%m.%Y %H:%M') }}{% else %}—{% endif %}</td>
       <td class="cell-sub">{{ cadence_label(task.recurrence_days) or "—" }}</td>
       <td>
-        {% if task.status.value == 'done' %}
+        {% if task.status == 'done' %}
           <span class="badge done">✅ Виконано</span>
         {% elif task.recurrence_days %}
           <span class="badge recurring">🔁 Активна</span>
@@ -51,7 +51,7 @@
       <td class="cell-sub">{{ task.reminder_count }}</td>
       <td class="row-actions">
         <a class="link-edit" href="/tasks/{{ task.id }}">✏️</a>
-        {% if task.status.value != 'done' %}
+        {% if task.status != 'done' %}
         <form class="inline-form" method="post" action="/tasks/{{ task.id }}/done">
           <button type="submit" title="Відмітити виконаним">✅</button>
         </form>

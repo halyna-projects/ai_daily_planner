@@ -35,7 +35,7 @@
 <div class="card">
   <h2>Стан</h2>
   <div class="field-grid">
-    <div class="field"><div class="label">Статус</div><div class="value">{{ "✅ Виконано" if task.status.value == "done" else "⏳ Активна" }}</div></div>
+    <div class="field"><div class="label">Статус</div><div class="value">{{ "✅ Виконано" if task.status == "done" else "⏳ Активна" }}</div></div>
     <div class="field"><div class="label">Нагадувань надіслано</div><div class="value">{{ task.reminder_count }}</div></div>
     <div class="field"><div class="label">Наступне нагадування</div><div class="value">{{ task.next_reminder_at.strftime('%d.%m.%Y %H:%M') }}</div></div>
     <div class="field"><div class="label">Створено</div><div class="value">{{ task.created_at.strftime('%d.%m.%Y %H:%M') }}</div></div>
@@ -43,7 +43,7 @@
 </div>
 
 <div class="card danger-card">
-  {% if task.status.value != 'done' %}
+  {% if task.status != 'done' %}
   <form class="inline-form" method="post" action="/tasks/{{ task.id }}/done">
     <button type="submit">✅ Відмітити виконаним</button>
   </form>

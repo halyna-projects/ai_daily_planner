@@ -3,7 +3,10 @@
 tapping: a calendar grid for any date, an hour grid then a minute grid for
 any time. No typed date/time format examples anywhere in this flow -- that
 was the whole problem with the earlier free-text version of /new. Plain
-free-text messages outside /new are unaffected."""
+free-text messages outside /new are unaffected.
+
+Every screen carries a "⬅️ Назад" button to the screen before it, so a
+mis-tap doesn't mean restarting the whole wizard with /new."""
 
 from __future__ import annotations
 
@@ -32,13 +35,23 @@ _MONTH_NAMES = [
 ]
 _WEEKDAY_LABELS = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд")
 
+# Which back-target an hour/minute screen points to, keyed by the current
+# `phase` -- derived purely from phase, since the hour/minute grids
+# themselves are generic and don't otherwise know how they were reached.
+_HOUR_BACK_TARGET = {"deadline": "deadline_date", "reminder": "reminder_date", "remind_time_only": "remind_type"}
+_MINUTE_BACK_TARGET = {"deadline": "deadline_hour", "reminder": "reminder_hour", "remind_time_only": "remind_time_hour"}
+
 
 class NewTaskForm(StatesGroup):
     title = State()
     recurrence_custom = State()
 
 
-def _remind_type_keyboard(with_date_option: bool) -> InlineKeyboardMarkup:
+def _back_button(target: str) -> InlineKeyboardButton:
+    return InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back:{target}")
+
+
+def _remind_type_keyboard(with_date_option: bool, back_target: str) -> InlineKeyboardMarkup:
     """The "when to remind" step doubles as the repeat-type question: pick
     a cadence directly (reuses the deadline's own time, no separate date
     to enter), or -- only when there's a deadline to diverge from -- a
@@ -60,6 +73,7 @@ def _remind_type_keyboard(with_date_option: bool) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(text="📅 Інша дата і час (одноразово)", callback_data="remind:custom_datetime")])
     else:
         rows.append([InlineKeyboardButton(text="Одноразово", callback_data="remind:none")])
+    rows.append([_back_button(back_target)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -76,7 +90,10 @@ def _cadence_label(recurrence_days: int | None) -> str:
 
 
 def _calendar_keyboard(
-    year: int, month: int, extra_button: Optional[tuple[str, str]] = None
+    year: int,
+    month: int,
+    extra_button: Optional[tuple[str, str]] = None,
+    back_target: Optional[str] = None,
 ) -> InlineKeyboardMarkup:
     cal = calendar_module.Calendar(firstweekday=0)
     weeks = cal.monthdayscalendar(year, month)
@@ -108,21 +125,30 @@ def _calendar_keyboard(
                     )
                 )
         rows.append(row)
+
+    if back_target:
+        rows.append([_back_button(back_target)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _hour_keyboard() -> InlineKeyboardMarkup:
+def _hour_keyboard(back_target: str) -> InlineKeyboardMarkup:
     hours = list(range(24))
     rows = [
         [InlineKeyboardButton(text=f"{h:02d}", callback_data=f"hr:{h}") for h in hours[i : i + 6]]
         for i in range(0, 24, 6)
     ]
+    rows.append([_back_button(back_target)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _minute_keyboard() -> InlineKeyboardMarkup:
+def _minute_keyboard(back_target: str) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=f":{m:02d}", callback_data=f"mi:{m}") for m in (0, 15, 30, 45)]]
+    rows.append([_back_button(back_target)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _recurrence_custom_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[_back_button("remind_type")]])
 
 
 async def _extra_button_for_phase(state: FSMContext) -> Optional[tuple[str, str]]:
@@ -130,6 +156,19 @@ async def _extra_button_for_phase(state: FSMContext) -> Optional[tuple[str, str]
     if data.get("phase") == "reminder":
         return None
     return ("Без дедлайну", "deadline:none")
+
+
+def _calendar_start(data: dict) -> tuple[int, int]:
+    """Default the calendar to the deadline's own month when there is one,
+    since that's the most likely month someone picking a reminder date
+    actually wants."""
+
+    due_at_raw = data.get("due_at")
+    if due_at_raw:
+        due_at = datetime.fromisoformat(due_at_raw)
+        return due_at.year, due_at.month
+    now = datetime.now()
+    return now.year, now.month
 
 
 _TITLE_PROMPT = "Введи завдання до виконання:"
@@ -198,7 +237,9 @@ async def got_no_deadline(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(due_at=None, remind_at=None)
     await callback.message.edit_text("Без дедлайну.")
     await callback.answer()
-    await callback.message.answer("Коли нагадати?", reply_markup=_remind_type_keyboard(with_date_option=False))
+    await callback.message.answer(
+        "Коли нагадати?", reply_markup=_remind_type_keyboard(with_date_option=False, back_target="deadline_date")
+    )
 
 
 @router.callback_query(F.data.startswith("cal:"))
@@ -217,7 +258,11 @@ async def got_calendar_action(callback: CallbackQuery, state: FSMContext) -> Non
     if action.startswith("nav:"):
         year, month = (int(x) for x in action.removeprefix("nav:").split("-"))
         extra = await _extra_button_for_phase(state)
-        await callback.message.edit_reply_markup(reply_markup=_calendar_keyboard(year, month, extra))
+        phase = data.get("phase", "deadline")
+        back_target = "remind_type" if phase == "reminder" else None
+        await callback.message.edit_reply_markup(
+            reply_markup=_calendar_keyboard(year, month, extra, back_target)
+        )
         await callback.answer()
         return
 
@@ -231,7 +276,9 @@ async def got_calendar_action(callback: CallbackQuery, state: FSMContext) -> Non
     else:
         await state.update_data(reminder_date=date_str)
     await callback.answer()
-    await callback.message.edit_text(f"Дата: {friendly_date}. Обери годину:", reply_markup=_hour_keyboard())
+    await callback.message.edit_text(
+        f"Дата: {friendly_date}. Обери годину:", reply_markup=_hour_keyboard(_HOUR_BACK_TARGET[phase])
+    )
 
 
 @router.callback_query(F.data.startswith("hr:"))
@@ -244,7 +291,10 @@ async def got_hour_choice(callback: CallbackQuery, state: FSMContext) -> None:
     hour = int(callback.data.removeprefix("hr:"))
     await state.update_data(picked_hour=hour)
     await callback.answer()
-    await callback.message.edit_text(f"Година: {hour:02d}. Обери хвилини:", reply_markup=_minute_keyboard())
+    phase = data.get("phase", "deadline")
+    await callback.message.edit_text(
+        f"Година: {hour:02d}. Обери хвилини:", reply_markup=_minute_keyboard(_MINUTE_BACK_TARGET[phase])
+    )
 
 
 @router.callback_query(F.data.startswith("mi:"))
@@ -264,7 +314,10 @@ async def got_minute_choice(callback: CallbackQuery, state: FSMContext) -> None:
         due_at = datetime(year, month, day, hour, minute)
         await state.update_data(due_at=due_at.isoformat())
         await callback.message.edit_text(f"Дедлайн: {due_at.strftime('%d.%m %H:%M')}.")
-        await callback.message.answer("Коли нагадати?", reply_markup=_remind_type_keyboard(with_date_option=True))
+        await callback.message.answer(
+            "Коли нагадати?",
+            reply_markup=_remind_type_keyboard(with_date_option=True, back_target="deadline_minute"),
+        )
     elif phase == "remind_time_only":
         # Daily/weekly: just a time, no date -- starts at the nearest
         # upcoming occurrence of that time and repeats from there.
@@ -320,19 +373,6 @@ async def got_remind_same(callback: CallbackQuery, state: FSMContext) -> None:
     await _finish(callback.message, state, callback.from_user.id)
 
 
-def _calendar_start(data: dict) -> tuple[int, int]:
-    """Default the calendar to the deadline's own month when there is one,
-    since that's the most likely month someone picking a reminder date
-    actually wants."""
-
-    due_at_raw = data.get("due_at")
-    if due_at_raw:
-        due_at = datetime.fromisoformat(due_at_raw)
-        return due_at.year, due_at.month
-    now = datetime.now()
-    return now.year, now.month
-
-
 @router.callback_query(F.data == "remind:custom_datetime")
 async def got_remind_custom_datetime(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
@@ -343,7 +383,9 @@ async def got_remind_custom_datetime(callback: CallbackQuery, state: FSMContext)
     await state.update_data(phase="reminder")
     await callback.answer()
     year, month = _calendar_start(data)
-    await callback.message.edit_text("Дата нагадування:", reply_markup=_calendar_keyboard(year, month))
+    await callback.message.edit_text(
+        "Дата нагадування:", reply_markup=_calendar_keyboard(year, month, back_target="remind_type")
+    )
 
 
 @router.callback_query(F.data.startswith("remind:rec:"))
@@ -357,7 +399,9 @@ async def got_remind_recurrence(callback: CallbackQuery, state: FSMContext) -> N
 
     if choice == "custom":
         await state.set_state(NewTaskForm.recurrence_custom)
-        await callback.message.edit_text("Через скільки днів повторювати? Напиши число.")
+        await callback.message.edit_text(
+            "Через скільки днів повторювати? Напиши число.", reply_markup=_recurrence_custom_keyboard()
+        )
         await callback.answer()
         return
 
@@ -374,7 +418,7 @@ async def got_recurrence_custom(message: Message, state: FSMContext) -> None:
         return
 
     if not message.text.strip().isdigit():
-        await message.answer("Напиши просто число днів, наприклад: 5.")
+        await message.answer("Напиши просто число днів, наприклад: 5.", reply_markup=_recurrence_custom_keyboard())
         return
 
     recurrence_days = int(message.text.strip())
@@ -392,12 +436,68 @@ async def _ask_cadence_time(message: Message, state: FSMContext, recurrence_days
 
     if recurrence_days in (1, 7):
         await state.update_data(phase="remind_time_only")
-        await message.answer(f"{cadence}. Обери годину:", reply_markup=_hour_keyboard())
+        await message.answer(f"{cadence}. Обери годину:", reply_markup=_hour_keyboard("remind_type"))
     else:
         await state.update_data(phase="reminder")
         data = await state.get_data()
         year, month = _calendar_start(data)
-        await message.answer(f"{cadence}. Обери дату:", reply_markup=_calendar_keyboard(year, month))
+        await message.answer(
+            f"{cadence}. Обери дату:", reply_markup=_calendar_keyboard(year, month, back_target="remind_type")
+        )
+
+
+@router.callback_query(F.data.startswith("back:"))
+async def got_back(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    if "title" not in data:
+        await callback.answer("Почни з /new.")
+        return
+
+    target = callback.data.removeprefix("back:")
+    await callback.answer()
+    await state.set_state(None)
+
+    if target == "deadline_date":
+        await state.update_data(phase="deadline")
+        now = datetime.now()
+        year, month = now.year, now.month
+        if data.get("deadline_date"):
+            y, m, _d = (int(x) for x in data["deadline_date"].split("-"))
+            year, month = y, m
+        await callback.message.edit_text(
+            "Дата дедлайну:",
+            reply_markup=_calendar_keyboard(year, month, extra_button=("Без дедлайну", "deadline:none")),
+        )
+    elif target == "deadline_hour":
+        await state.update_data(phase="deadline")
+        await callback.message.edit_text("Обери годину:", reply_markup=_hour_keyboard("deadline_date"))
+    elif target == "deadline_minute":
+        await state.update_data(phase="deadline")
+        hour = data.get("picked_hour", 0)
+        await callback.message.edit_text(
+            f"Година: {hour:02d}. Обери хвилини:", reply_markup=_minute_keyboard("deadline_hour")
+        )
+    elif target == "remind_type":
+        with_date = bool(data.get("due_at"))
+        back_target = "deadline_minute" if with_date else "deadline_date"
+        await callback.message.edit_text(
+            "Коли нагадати?", reply_markup=_remind_type_keyboard(with_date_option=with_date, back_target=back_target)
+        )
+    elif target == "reminder_date":
+        await state.update_data(phase="reminder")
+        year, month = _calendar_start(data)
+        if data.get("reminder_date"):
+            y, m, _d = (int(x) for x in data["reminder_date"].split("-"))
+            year, month = y, m
+        await callback.message.edit_text(
+            "Дата нагадування:", reply_markup=_calendar_keyboard(year, month, back_target="remind_type")
+        )
+    elif target == "reminder_hour":
+        await state.update_data(phase="reminder")
+        await callback.message.edit_text("Обери годину:", reply_markup=_hour_keyboard("reminder_date"))
+    elif target == "remind_time_hour":
+        await state.update_data(phase="remind_time_only")
+        await callback.message.edit_text("Обери годину:", reply_markup=_hour_keyboard("remind_type"))
 
 
 async def _finish(message: Message, state: FSMContext, telegram_user_id: int) -> None:
